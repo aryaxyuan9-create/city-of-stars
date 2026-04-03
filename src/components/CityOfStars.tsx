@@ -613,21 +613,24 @@ function UploadModal({
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from("story-images")
           .upload(path, file, { contentType: file.type });
-        if (!uploadError && uploadData) {
+        if (uploadError) {
+          console.error("Storage upload error:", uploadError);
+        } else if (uploadData) {
           const { data: { publicUrl } } = supabase.storage
             .from("story-images")
             .getPublicUrl(uploadData.path);
           imageUrl = publicUrl;
         }
-      } catch (_) {
-        // Storage 上传失败，fallback 用 base64
+      } catch (e) {
+        console.error("Storage exception:", e);
       }
-      await supabase.from("stories").insert({
+      const { error: insertError } = await supabase.from("stories").insert({
         text,
         image_url: imageUrl,
         taken_at: takenAt.toISOString(),
         location: location.trim() || null,
       });
+      if (insertError) console.error("Insert error:", insertError);
     })();
   };
 
