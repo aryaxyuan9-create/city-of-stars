@@ -576,20 +576,24 @@ function UploadModal({
       try {
         const exifr = await import('exifr');
         const exif = await exifr.parse(file, ['DateTimeOriginal']);
-        if (exif?.DateTimeOriginal) {
-          takenAt = exif.DateTimeOriginal;
-        }
-      } catch (e) {
-        // 没有 EXIF 静默失败，后续用上传时间代替
-      }
-
-      // 存到 state，供提交时使用
+        if (exif?.DateTimeOriginal) takenAt = exif.DateTimeOriginal;
+      } catch (_) {}
       setTakenAt(takenAt || new Date());
 
-      // 原有逻辑不动
-      const reader = new FileReader();
-      reader.onloadend = () => setPreview(reader.result as string);
-      reader.readAsDataURL(file);
+      // 压缩图片到 800px 以内，JPEG 0.82，保证 <300KB
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        const MAX = 800;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width  = Math.round(img.width  * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setPreview(canvas.toDataURL("image/jpeg", 0.82));
+        URL.revokeObjectURL(objectUrl);
+      };
+      img.src = objectUrl;
     }
   };
 
