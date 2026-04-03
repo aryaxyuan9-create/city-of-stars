@@ -914,7 +914,7 @@ export default function CityOfStars() {
 
       <Canvas
         className="h-full w-full"
-        gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
+        gl={{ antialias: true, alpha: true, powerPreference: "high-performance", stencil: false }}
         onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}
         dpr={[1, 2]}
         onPointerMissed={() => setSelectedId(null)}
