@@ -566,6 +566,7 @@ function UploadModal({
   const [location, setLocation] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [takenAt, setTakenAt] = useState<Date>(new Date());
+  const [submitting, setSubmitting] = useState(false);
 
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -602,40 +603,20 @@ function UploadModal({
       alert("Please add a photo and write your story.");
       return;
     }
-
-    // 先关闭 modal、立刻显示星星（乐观更新）
+    setSubmitting(true);
+    const { error } = await supabase.from("stories").insert({
+      text,
+      image_url: preview,
+      taken_at: takenAt.toISOString(),
+      location: location.trim() || null,
+    });
+    setSubmitting(false);
+    if (error) {
+      alert("Upload failed: " + error.message);
+      return;
+    }
     onUpload({ text, imageUrl: preview });
     onClose();
-
-    // 后台上传图片到 Supabase Storage，再 insert 记录
-    (async () => {
-      let imageUrl = preview;
-      try {
-        const file = await (await fetch(preview)).blob();
-        const ext = file.type.split("/")[1] || "jpg";
-        const path = `${Date.now()}.${ext}`;
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from("story-images")
-          .upload(path, file, { contentType: file.type });
-        if (uploadError) {
-          console.error("Storage upload error:", uploadError);
-        } else if (uploadData) {
-          const { data: { publicUrl } } = supabase.storage
-            .from("story-images")
-            .getPublicUrl(uploadData.path);
-          imageUrl = publicUrl;
-        }
-      } catch (e) {
-        console.error("Storage exception:", e);
-      }
-      const { error: insertError } = await supabase.from("stories").insert({
-        text,
-        image_url: imageUrl,
-        taken_at: takenAt.toISOString(),
-        location: location.trim() || null,
-      });
-      if (insertError) console.error("Insert error:", insertError);
-    })();
   };
 
   return (
@@ -765,17 +746,19 @@ function UploadModal({
 
         <button
           onClick={handleSubmit}
+          disabled={submitting}
           className="w-full rounded-xl py-3 transition-all active:scale-[0.98]"
           style={{
-            background: '#FFEC8B',
+            background: submitting ? 'rgba(255,236,139,0.5)' : '#FFEC8B',
             color: '#1C1C1C',
             fontFamily: "'Playfair Display', Georgia, serif",
             fontStyle: 'italic',
             fontWeight: 500,
             fontSize: '1rem',
+            cursor: submitting ? 'wait' : 'pointer',
           }}
         >
-          Light Up This Star ✦
+          {submitting ? 'Uploading...' : 'Light Up This Star ✦'}
         </button>
       </div>
     </div>
