@@ -599,15 +599,36 @@ function UploadModal({
       return;
     }
 
-    await supabase.from("stories").insert({
-      text,
-      image_url: preview,
-      taken_at: takenAt.toISOString(),
-      location: location.trim() || null,
-    });
-
+    // 先关闭 modal、立刻显示星星（乐观更新）
     onUpload({ text, imageUrl: preview });
     onClose();
+
+    // 后台上传图片到 Supabase Storage，再 insert 记录
+    (async () => {
+      let imageUrl = preview;
+      try {
+        const file = await (await fetch(preview)).blob();
+        const ext = file.type.split("/")[1] || "jpg";
+        const path = `${Date.now()}.${ext}`;
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from("story-images")
+          .upload(path, file, { contentType: file.type });
+        if (!uploadError && uploadData) {
+          const { data: { publicUrl } } = supabase.storage
+            .from("story-images")
+            .getPublicUrl(uploadData.path);
+          imageUrl = publicUrl;
+        }
+      } catch (_) {
+        // Storage 上传失败，fallback 用 base64
+      }
+      await supabase.from("stories").insert({
+        text,
+        image_url: imageUrl,
+        taken_at: takenAt.toISOString(),
+        location: location.trim() || null,
+      });
+    })();
   };
 
   return (
@@ -817,6 +838,34 @@ export default function CityOfStars() {
   const [distanceFactor, setDistanceFactor] = useState(10);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+
+  // 启动时从 Supabase 拉取所有故事
+  useEffect(() => {
+    supabase
+      .from("stories")
+      .select("*")
+      .order("created_at", { ascending: true })
+      .then(({ data }) => {
+        if (!data || data.length === 0) return;
+        const loaded: StoryData[] = data.map((row, i) => {
+          const v = galaxyPosition(i, Math.max(data.length, 50), {
+            arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
+          });
+          return {
+            id: new Date(row.created_at).getTime(),
+            position: [v.x, v.y, v.z] as [number, number, number],
+            text: row.text,
+            imageUrl: row.image_url ?? "https://picsum.photos/400/300?random=99",
+            seed: Math.random(),
+            date: new Date(row.created_at).toLocaleDateString("zh-CN", {
+              year: "numeric", month: "2-digit", day: "2-digit",
+            }).replace(/\//g, "."),
+            taken_at: row.taken_at ?? undefined,
+          };
+        });
+        setStories(loaded);
+      });
+  }, []);
 
   const filteredStories = stories.filter(story => {
     if (filter === 'all') return true;
