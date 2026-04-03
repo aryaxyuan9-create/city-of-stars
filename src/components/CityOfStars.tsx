@@ -127,31 +127,44 @@ function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
   });
 
   return (
-    <points
-      ref={pointsRef}
+    <group
       onClick={(e) => { e.stopPropagation(); onUploadClick(); }}
       onPointerOver={() => { setHovered(true); document.body.style.cursor = "pointer"; }}
       onPointerOut={() => { setHovered(false); document.body.style.cursor = "default"; }}
     >
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          count={positions.length / 3}
-          array={positions}
-          itemSize={3}
+      {/* 内核发光球体 */}
+      <mesh>
+        <sphereGeometry args={[1.45, 32, 32]} />
+        <meshBasicMaterial
+          color={new THREE.Color("#ffe8a0")}
+          transparent
+          opacity={0.13}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
         />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.12}
-        color="#FFE082"
-        map={dotTexture}
-        transparent
-        alphaTest={0.01}
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-        sizeAttenuation
-      />
-    </points>
+      </mesh>
+
+      <points ref={pointsRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={positions.length / 3}
+            array={positions}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.12}
+          color="#FFE082"
+          map={dotTexture}
+          transparent
+          alphaTest={0.01}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          sizeAttenuation
+        />
+      </points>
+    </group>
   );
 }
 
