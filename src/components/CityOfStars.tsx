@@ -32,8 +32,6 @@ const NYC_LOCATIONS = [
 
 const STAR_TEXTURES = [
   '/star01.png', '/star02.png', '/star03.png', '/star04.png',
-  '/star05.png', '/star06.png', '/star07.png', '/star08.png',
-  '/star09.png', '/star10.png',
 ];
 
 function getStarTexture(storyId: string, createdAt?: string): string {
