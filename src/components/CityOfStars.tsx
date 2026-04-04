@@ -46,7 +46,7 @@ function getStarTexture(storyId: string, createdAt?: string): string {
 }
 
 export type StoryData = {
-  id: number;
+  id: string;
   position: [number, number, number];
   text: string;
   imageUrl: string;
@@ -54,6 +54,56 @@ export type StoryData = {
   date: string;
   taken_at?: string;
 };
+
+type StoredStory = {
+  id: string;
+  text: string;
+  imageUrl: string;
+  date: string;
+  taken_at?: string;
+};
+
+const LOCAL_STORIES_KEY = "city_of_stars_local_stories_v1";
+
+function readLocalStories(): StoryData[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LOCAL_STORIES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as StoredStory[];
+    if (!Array.isArray(parsed) || parsed.length === 0) return [];
+
+    return parsed.map((s, i) => {
+      const v = galaxyPosition(i, Math.max(parsed.length, 50), {
+        arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
+      });
+      return {
+        id: s.id,
+        position: [v.x, v.y, v.z] as [number, number, number],
+        text: s.text,
+        imageUrl: s.imageUrl,
+        seed: Math.random(),
+        date: s.date,
+        taken_at: s.taken_at,
+      };
+    });
+  } catch (err) {
+    console.error("Failed to parse local stories:", err);
+    return [];
+  }
+}
+
+function writeLocalStories(stories: StoryData[]) {
+  if (typeof window === "undefined") return;
+  const payload: StoredStory[] = stories.map((s) => ({
+    id: s.id,
+    text: s.text,
+    imageUrl: s.imageUrl,
+    date: s.date,
+    taken_at: s.taken_at,
+  }));
+  window.localStorage.setItem(LOCAL_STORIES_KEY, JSON.stringify(payload));
+}
 
 // --- 柔和圆点贴图 (canvas 生成) ---
 function createSoftDotTexture(): THREE.CanvasTexture {
@@ -353,12 +403,12 @@ function CameraRig({
   selectedId,
   stories,
 }: {
-  selectedId: number | null;
+  selectedId: string | null;
   stories: StoryData[];
 }) {
   const controlsRef = useRef<OrbitControlsImpl>(null);
+  const prevId = useRef<string | null>(null);
   const { camera } = useThree();
-  const prevId = useRef<number | null>(null);
 
   useEffect(() => {
     if (selectedId == null) {
@@ -494,7 +544,7 @@ function StarFieldScene({
   onUploadClick,
 }: {
   stories: StoryData[];
-  selectedId: number | null;
+  selectedId: string | null;
   onSelectStar: (data: StoryData) => void;
   distanceFactor: number;
   onUploadClick: () => void;
@@ -560,7 +610,7 @@ function UploadModal({
   onUpload,
 }: {
   onClose: () => void;
-  onUpload: (story: { text: string; imageUrl: string | null }) => void;
+  onUpload: (story: { text: string; imageUrl: string | null; takenAt: string }) => void;
 }) {
   const [text, setText] = useState("");
   const [location, setLocation] = useState("");
@@ -612,10 +662,10 @@ function UploadModal({
     });
     setSubmitting(false);
     if (error) {
-      alert("Upload failed: " + error.message);
-      return;
+      console.error("Cloud upload failed, using local backup:", error);
+      alert("Cloud upload failed, but saved on this browser.");
     }
-    onUpload({ text, imageUrl: preview });
+    onUpload({ text, imageUrl: preview, takenAt: takenAt.toISOString() });
     onClose();
   };
 
@@ -810,8 +860,8 @@ function galaxyPosition(
 
 // --- 默认故事数据 ---
 const STORY_SEEDS = [
-  { id: 1, text: "曼哈顿的落日，把玻璃幕墙染成蜜色。", imageUrl: "https://picsum.photos/400/300?random=11", seed: 0.31, date: "2023.10.12" },
-  { id: 2, text: "中央公园的雪，安静得像停下的时间。",   imageUrl: "https://picsum.photos/400/300?random=22", seed: 0.77, date: "2023.12.25" },
+  { id: "default-1", text: "曼哈顿的落日，把玻璃幕墙染成蜜色。", imageUrl: "https://picsum.photos/400/300?random=11", seed: 0.31, date: "2023.10.12" },
+  { id: "default-2", text: "中央公园的雪，安静得像停下的时间。",   imageUrl: "https://picsum.photos/400/300?random=22", seed: 0.77, date: "2023.12.25" },
 ];
 
 const DEFAULT_STORIES: StoryData[] = STORY_SEEDS.map((s, i) => {
@@ -823,38 +873,69 @@ const DEFAULT_STORIES: StoryData[] = STORY_SEEDS.map((s, i) => {
 
 // --- 主组件 ---
 export default function CityOfStars() {
-  const [stories, setStories] = useState<StoryData[]>(DEFAULT_STORIES);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [stories, setStories] = useState<StoryData[]>(() => {
+    const localStories = readLocalStories();
+    return localStories.length > 0 ? localStories : DEFAULT_STORIES;
+  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [distanceFactor, setDistanceFactor] = useState(10);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // 启动时从 Supabase 拉取所有故事
   useEffect(() => {
-    supabase
-      .from("stories")
-      .select("*")
-      .order("created_at", { ascending: true })
-      .then(({ data }) => {
-        if (!data || data.length === 0) return;
-        const loaded: StoryData[] = data.map((row, i) => {
-          const v = galaxyPosition(i, Math.max(data.length, 50), {
-            arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
-          });
-          return {
-            id: new Date(row.created_at).getTime(),
-            position: [v.x, v.y, v.z] as [number, number, number],
-            text: row.text,
-            imageUrl: row.image_url ?? "https://picsum.photos/400/300?random=99",
-            seed: Math.random(),
-            date: new Date(row.created_at).toLocaleDateString("zh-CN", {
-              year: "numeric", month: "2-digit", day: "2-digit",
-            }).replace(/\//g, "."),
-            taken_at: row.taken_at ?? undefined,
-          };
+    const fetchStories = async () => {
+      // If local cache exists, keep using it to avoid blocking UX on slow cloud queries.
+      const localStories = readLocalStories();
+      if (localStories.length > 0) {
+        setStories(localStories);
+      }
+
+      const { data, error } = await supabase
+        .from("stories")
+        .select("id,text,image_url,taken_at,location")
+        .order("taken_at", { ascending: false })
+        .limit(120);
+
+      if (error) {
+        console.error("Failed to fetch stories:", error);
+        // Only show blocking error when no local data is available.
+        if (localStories.length === 0) {
+          setLoadError(error.message);
+        } else {
+          setLoadError(null);
+        }
+        return;
+      }
+
+      setLoadError(null);
+      if (!data || data.length === 0) return;
+
+      const loadedAsc = [...data].reverse();
+      const loaded: StoryData[] = loadedAsc.map((row, i) => {
+        const v = galaxyPosition(i, Math.max(data.length, 50), {
+          arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
         });
-        setStories(loaded);
+        return {
+          id: row.id,
+          position: [v.x, v.y, v.z] as [number, number, number],
+          text: row.text,
+          imageUrl: row.image_url ?? "https://picsum.photos/400/300?random=99",
+          seed: Math.random(),
+          date: row.taken_at
+            ? new Date(row.taken_at).toLocaleDateString("zh-CN", {
+                year: "numeric", month: "2-digit", day: "2-digit",
+              }).replace(/\//g, ".")
+            : "unknown",
+          taken_at: row.taken_at ?? undefined,
+        };
       });
+      setStories(loaded);
+      writeLocalStories(loaded);
+    };
+
+    fetchStories();
   }, []);
 
   const filteredStories = stories.filter(story => {
@@ -876,24 +957,29 @@ export default function CityOfStars() {
     return () => window.removeEventListener("resize", q);
   }, []);
 
-  const handleAddStory = (newStory: { text: string; imageUrl: string | null }) => {
+  const handleAddStory = (newStory: { text: string; imageUrl: string | null; takenAt: string }) => {
     const v = galaxyPosition(stories.length, 50, {
       arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
     });
     const pos: [number, number, number] = [v.x, v.y, v.z];
-    setStories((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        position: pos,
-        text: newStory.text,
-        imageUrl: newStory.imageUrl ?? "https://picsum.photos/400/300?random=99",
-        seed: Math.random(),
-        date: new Date()
-          .toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })
-          .replace(/\//g, "."),
-      },
-    ]);
+    setStories((prev) => {
+      const next = [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          position: pos,
+          text: newStory.text,
+          imageUrl: newStory.imageUrl ?? "https://picsum.photos/400/300?random=99",
+          seed: Math.random(),
+          date: new Date()
+            .toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })
+            .replace(/\//g, "."),
+          taken_at: newStory.takenAt,
+        },
+      ];
+      writeLocalStories(next);
+      return next;
+    });
   };
 
   return (
@@ -952,6 +1038,19 @@ export default function CityOfStars() {
           </button>
         ))}
       </div>
+
+      {loadError && (
+        <div
+          className="pointer-events-none absolute left-1/2 top-20 z-20 -translate-x-1/2 rounded-md border px-3 py-2 text-xs"
+          style={{
+            color: "#ffd1d1",
+            background: "rgba(120, 0, 0, 0.35)",
+            borderColor: "rgba(255, 150, 150, 0.45)",
+          }}
+        >
+          Failed to load stories from Supabase: {loadError}
+        </div>
+      )}
 
       {/* UI 层 */}
       <div className="pointer-events-none absolute bottom-10 left-0 right-0 z-10 flex flex-col items-center text-white">
