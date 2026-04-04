@@ -6,10 +6,9 @@ const PASSWORD = "cityofstars2024";
 type Story = {
   id: string;
   text: string;
-  image_url: string | null;
+  image_url?: string | null;
   location: string | null;
   taken_at: string | null;
-  created_at: string;
 };
 
 export default function AdminPage() {
@@ -18,13 +17,22 @@ export default function AdminPage() {
   const [stories, setStories] = useState<Story[]>([]);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fetchStories = async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("stories")
-      .select("*")
-      .order("created_at", { ascending: false });
+      .select("id,text,taken_at,location")
+      .order("taken_at", { ascending: false });
+    if (error) {
+      console.error("Failed to fetch admin stories:", error);
+      setErrorMessage(error.message);
+      setStories([]);
+      setLoading(false);
+      return;
+    }
+    setErrorMessage(null);
     setStories(data ?? []);
     setLoading(false);
   };
@@ -36,7 +44,12 @@ export default function AdminPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this story?")) return;
     setDeleting(id);
-    await supabase.from("stories").delete().eq("id", id);
+    const { error } = await supabase.from("stories").delete().eq("id", id);
+    if (error) {
+      alert("Delete failed: " + error.message);
+      setDeleting(null);
+      return;
+    }
     setStories((prev) => prev.filter((s) => s.id !== id));
     setDeleting(null);
   };
@@ -126,6 +139,20 @@ export default function AdminPage() {
           </span>
         </div>
 
+        {errorMessage && (
+          <div style={{
+            marginBottom: "16px",
+            border: "1px solid rgba(255,150,150,0.45)",
+            background: "rgba(120,0,0,0.35)",
+            color: "#ffd1d1",
+            borderRadius: "10px",
+            padding: "10px 12px",
+            fontSize: "12px",
+          }}>
+            Failed to load: {errorMessage}
+          </div>
+        )}
+
         {loading ? (
           <div style={{ color: "rgba(230,230,250,0.4)", fontStyle: "italic" }}>loading...</div>
         ) : stories.length === 0 ? (
@@ -139,20 +166,13 @@ export default function AdminPage() {
                 borderRadius: "14px",
                 overflow: "hidden",
               }}>
-                {story.image_url && (
-                  <img
-                    src={story.image_url}
-                    alt=""
-                    style={{ width: "100%", height: "160px", objectFit: "cover", display: "block" }}
-                  />
-                )}
                 <div style={{ padding: "16px" }}>
                   <p style={{ fontSize: "13px", lineHeight: 1.6, marginBottom: "10px", color: "rgba(230,230,250,0.85)" }}>
                     {story.text}
                   </p>
                   <div style={{ fontSize: "11px", color: "rgba(230,230,250,0.35)", marginBottom: "14px" }}>
                     {story.location && <span>📍 {story.location} · </span>}
-                    {new Date(story.created_at).toLocaleDateString("en-US", {
+                    {story.taken_at && new Date(story.taken_at).toLocaleDateString("en-US", {
                       year: "numeric", month: "short", day: "numeric",
                     })}
                   </div>
