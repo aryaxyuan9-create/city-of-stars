@@ -402,14 +402,17 @@ function ParticleStoryStar({
 function CameraRig({
   selectedId,
   stories,
+  resetTrigger,
 }: {
   selectedId: string | null;
   stories: StoryData[];
+  resetTrigger: number;
 }) {
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const prevId = useRef<string | null>(null);
   const { camera } = useThree();
 
+  // Fly to selected story
   useEffect(() => {
     if (selectedId == null) {
       prevId.current = null;
@@ -429,6 +432,16 @@ function CameraRig({
     gsap.to(camera.position, { x: endCam.x, y: endCam.y, z: endCam.z, duration: 3.5, ease: "power3.inOut", onUpdate: upd });
     gsap.to(ctrl.target, { x: targetPos.x, y: targetPos.y, z: targetPos.z, duration: 3.5, ease: "power3.inOut", onUpdate: upd });
   }, [selectedId, stories, camera]);
+
+  // Return to initial view
+  useEffect(() => {
+    if (resetTrigger === 0) return;
+    const ctrl = controlsRef.current;
+    if (!ctrl || !(camera instanceof THREE.PerspectiveCamera)) return;
+    const upd = () => ctrl.update();
+    gsap.to(camera.position, { x: 0, y: 0.5, z: 20, duration: 2.2, ease: "power3.inOut", onUpdate: upd });
+    gsap.to(ctrl.target,     { x: 0, y: 0,   z: 0,  duration: 2.2, ease: "power3.inOut", onUpdate: upd });
+  }, [resetTrigger, camera]);
 
   return (
     <OrbitControls
@@ -542,12 +555,14 @@ function StarFieldScene({
   onSelectStar,
   distanceFactor,
   onUploadClick,
+  resetTrigger,
 }: {
   stories: StoryData[];
   selectedId: string | null;
   onSelectStar: (data: StoryData) => void;
   distanceFactor: number;
   onUploadClick: () => void;
+  resetTrigger: number;
 }) {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -587,7 +602,7 @@ function StarFieldScene({
         ))}
       </group>
 
-      <CameraRig selectedId={selectedId} stories={stories} />
+      <CameraRig selectedId={selectedId} stories={stories} resetTrigger={resetTrigger} />
 
       <EffectComposer enableNormalPass={false} multisampling={0}>
         <SMAA />
@@ -878,10 +893,16 @@ export default function CityOfStars() {
     return localStories.length > 0 ? localStories : DEFAULT_STORIES;
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [resetTrigger, setResetTrigger] = useState(0);
   const [distanceFactor, setDistanceFactor] = useState(10);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const handleReset = () => {
+    setSelectedId(null);
+    setResetTrigger((n) => n + 1);
+  };
 
   // 启动时从 Supabase 拉取所有故事
   useEffect(() => {
@@ -1004,7 +1025,7 @@ export default function CityOfStars() {
         gl={{ antialias: true, alpha: true, powerPreference: "high-performance", stencil: false }}
         onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}
         dpr={[1, 2]}
-        onPointerMissed={() => setSelectedId(null)}
+        onPointerMissed={handleReset}
       >
         <StarFieldScene
           stories={filteredStories}
@@ -1031,8 +1052,27 @@ export default function CityOfStars() {
           }}
           distanceFactor={distanceFactor}
           onUploadClick={() => setIsUploadModalOpen(true)}
+          resetTrigger={resetTrigger}
         />
       </Canvas>
+
+      {/* Return button */}
+      {selectedId !== null && (
+        <button
+          onClick={handleReset}
+          className="pointer-events-auto fixed top-10 left-10 z-20 flex items-center gap-2 rounded-full px-4 py-2 text-sm backdrop-blur-md transition-all"
+          style={{
+            background: "rgba(255,255,255,0.07)",
+            border: "1px solid rgba(230,230,250,0.15)",
+            color: "rgba(230,230,250,0.7)",
+            fontFamily: "'Playfair Display', Georgia, serif",
+            fontStyle: "italic",
+            animation: "cityStarsCardIn 0.3s ease-out both",
+          }}
+        >
+          ← Return
+        </button>
+      )}
 
       {/* Filter UI */}
       <div className="pointer-events-auto absolute top-8 left-0 right-0 z-20 flex justify-center gap-2">
