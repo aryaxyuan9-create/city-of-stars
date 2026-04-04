@@ -53,10 +53,12 @@ export type StoryData = {
   seed: number;
   date: string;
   taken_at?: string;
+  location?: string;
 };
 
 type StoredStory = {
   id: string;
+  location?: string;
   text: string;
   imageUrl: string;
   date: string;
@@ -248,13 +250,11 @@ function ParticleStoryStar({
   data,
   isSelected,
   dimmed,
-  distanceFactor,
   onClick,
 }: {
   data: StoryData;
   isSelected: boolean;
   dimmed: boolean;
-  distanceFactor: number;
   onClick: (data: StoryData) => void;
 }) {
   const meshRef = useRef<THREE.Sprite>(null);
@@ -268,26 +268,6 @@ function ParticleStoryStar({
     if (!mat) return;
     gsap.to(mat, { opacity: dimmed ? 0.2 : 0.95, duration: 1.2, ease: "power2.inOut" });
   }, [dimmed]);
-  const [imgLoaded, setImgLoaded] = useState(false);
-  const [typingActive, setTypingActive] = useState(false);
-
-  useEffect(() => {
-    setImgLoaded(false);
-    if (!isSelected) return;
-    const timer = setTimeout(() => setImgLoaded(true), 80);
-    return () => clearTimeout(timer);
-  }, [isSelected]);
-
-  useEffect(() => {
-    if (isSelected) {
-      const timer = setTimeout(() => setTypingActive(true), 600);
-      return () => clearTimeout(timer);
-    } else {
-      setTypingActive(false);
-    }
-  }, [isSelected]);
-
-  const displayedText = useTypewriter(data.text, typingActive, 38);
 
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
@@ -357,31 +337,6 @@ function ParticleStoryStar({
           color={new THREE.Color('#D4AF5F')}
         />
       </sprite>
-      {isSelected && (
-        <Html distanceFactor={distanceFactor} position={[0, 1.15, 0]} center>
-          <div
-            className="pointer-events-auto w-[min(16rem,88vw)] rounded-xl border border-amber-400/10 bg-black/75 p-4 text-white shadow-2xl backdrop-blur-xl saturate-150"
-            style={{ animation: "cityStarsCardIn 0.45s ease-out both" }}
-          >
-            <img
-              src={data.imageUrl}
-              alt=""
-              className="mb-2 h-32 w-full rounded-lg object-cover"
-              style={{
-                filter:    imgLoaded ? "grayscale(0%) blur(0px)"  : "grayscale(100%) blur(8px)",
-                transform: imgLoaded ? "scale(1)"                 : "scale(1.04)",
-                opacity:   imgLoaded ? 1                          : 0,
-                transition: "all 1.1s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
-              }}
-            />
-            <p className="text-sm font-light leading-relaxed">
-              {displayedText}
-              <span style={{ opacity: typingActive ? 1 : 0, animation: "blink 1s step-end infinite" }}>|</span>
-            </p>
-            <div className="mt-2 text-[10px] opacity-50">NYC · {data.date}</div>
-          </div>
-        </Html>
-      )}
       {isSelected && (
         <mesh scale={scale * 2.2}>
           <sphereGeometry args={[0.22, 16, 16]} />
@@ -553,16 +508,16 @@ function StarFieldScene({
   stories,
   selectedId,
   onSelectStar,
-  distanceFactor,
   onUploadClick,
   resetTrigger,
+  bloomBoost,
 }: {
   stories: StoryData[];
   selectedId: string | null;
   onSelectStar: (data: StoryData) => void;
-  distanceFactor: number;
   onUploadClick: () => void;
   resetTrigger: number;
+  bloomBoost: boolean;
 }) {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -596,7 +551,6 @@ function StarFieldScene({
             data={story}
             isSelected={selectedId === story.id}
             dimmed={selectedId !== null && selectedId !== story.id}
-            distanceFactor={distanceFactor}
             onClick={onSelectStar}
           />
         ))}
@@ -607,11 +561,11 @@ function StarFieldScene({
       <EffectComposer enableNormalPass={false} multisampling={0}>
         <SMAA />
         <Bloom
-          luminanceThreshold={0.05}
+          luminanceThreshold={bloomBoost ? 0.01 : 0.05}
           luminanceSmoothing={0.9}
           mipmapBlur
-          intensity={1.8}
-          radius={0.9}
+          intensity={bloomBoost ? 3.5 : 1.8}
+          radius={bloomBoost ? 1.3 : 0.9}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
       </EffectComposer>
@@ -886,6 +840,116 @@ const DEFAULT_STORIES: StoryData[] = STORY_SEEDS.map((s, i) => {
   return { ...s, position: [v.x, v.y, v.z] as [number, number, number] };
 });
 
+// --- Story Overlay (Album Atlas style) ---
+function StoryOverlay({ story, onClose }: { story: StoryData; onClose: () => void }) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [typingActive, setTypingActive] = useState(false);
+  const displayedText = useTypewriter(story.text, typingActive, 45);
+
+  useEffect(() => {
+    // Fade in
+    if (overlayRef.current) {
+      gsap.fromTo(overlayRef.current, { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "power2.inOut" });
+    }
+    const t1 = setTimeout(() => setImgLoaded(true), 200);
+    const t2 = setTimeout(() => setTypingActive(true), 700);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
+
+  const handleClose = () => {
+    if (overlayRef.current) {
+      gsap.to(overlayRef.current, { opacity: 0, duration: 0.4, ease: "power2.inOut", onComplete: onClose });
+    } else {
+      onClose();
+    }
+  };
+
+  return (
+    <div
+      ref={overlayRef}
+      className="fixed inset-0 z-40 pointer-events-none"
+      style={{ opacity: 0 }}
+    >
+      {/* Blur backdrop */}
+      <div
+        className="absolute inset-0"
+        style={{ backdropFilter: "blur(16px) brightness(0.55)", background: "rgba(5,3,20,0.5)" }}
+      />
+
+      {/* ← Back button */}
+      <button
+        onClick={handleClose}
+        className="pointer-events-auto absolute top-10 left-10 z-10 flex items-center gap-2 rounded-full px-4 py-2 text-sm backdrop-blur-md transition-opacity hover:opacity-100"
+        style={{
+          background: "rgba(255,255,255,0.07)",
+          border: "1px solid rgba(230,230,250,0.15)",
+          color: "rgba(230,230,250,0.65)",
+          fontFamily: "'Playfair Display', Georgia, serif",
+          fontStyle: "italic",
+          opacity: 0.8,
+        }}
+      >
+        ← Back
+      </button>
+
+      {/* Top-right metadata */}
+      <div
+        className="absolute top-10 right-10 z-10 text-right pointer-events-none"
+        style={{
+          fontFamily: "'Playfair Display', Georgia, serif",
+          fontStyle: "italic",
+          color: "rgba(230,230,250,0.5)",
+          fontSize: "11px",
+          lineHeight: "2",
+          letterSpacing: "0.08em",
+        }}
+      >
+        {story.location && <div style={{ color: "rgba(230,230,250,0.75)", fontSize: "12px" }}>NYC · {story.location}</div>}
+        <div>{story.date}</div>
+      </div>
+
+      {/* Central photo — center-upper */}
+      <div className="absolute inset-0 flex items-center justify-center" style={{ paddingBottom: "18vh" }}>
+        <img
+          src={story.imageUrl || ""}
+          alt=""
+          style={{
+            maxWidth: "40vw",
+            maxHeight: "58vh",
+            objectFit: "contain",
+            border: "1px solid rgba(255,255,255,0.22)",
+            boxShadow: "0 0 80px rgba(255,255,255,0.05), 0 8px 40px rgba(0,0,0,0.6)",
+            filter: imgLoaded ? "none" : "blur(12px) grayscale(60%)",
+            transition: "filter 1.2s cubic-bezier(0.25,0.46,0.45,0.94)",
+          }}
+        />
+      </div>
+
+      {/* Story text — center-lower */}
+      <div
+        className="absolute bottom-20 left-0 right-0 flex flex-col items-center px-8 pointer-events-none"
+      >
+        <p
+          style={{
+            fontFamily: "'Playfair Display', Georgia, serif",
+            fontStyle: "italic",
+            color: "rgba(230,230,250,0.82)",
+            fontSize: "clamp(0.85rem, 1.8vw, 1.1rem)",
+            letterSpacing: "0.12em",
+            lineHeight: "2.2",
+            textAlign: "center",
+            maxWidth: "52ch",
+          }}
+        >
+          {displayedText}
+          <span style={{ animation: "blink 1s step-end infinite" }}>|</span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // --- 主组件 ---
 export default function CityOfStars() {
   const [stories, setStories] = useState<StoryData[]>(() => {
@@ -946,11 +1010,12 @@ export default function CityOfStars() {
           imageUrl: "", // loaded lazily on click
           seed: Math.random(),
           date: row.taken_at
-            ? new Date(row.taken_at).toLocaleDateString("zh-CN", {
-                year: "numeric", month: "2-digit", day: "2-digit",
-              }).replace(/\//g, ".")
+            ? new Date(row.taken_at).toLocaleDateString("en-US", {
+                year: "numeric", month: "short", day: "numeric",
+              })
             : "unknown",
           taken_at: row.taken_at ?? undefined,
+          location: row.location ?? undefined,
         };
       });
       setStories(loaded);
@@ -1025,14 +1090,13 @@ export default function CityOfStars() {
         gl={{ antialias: true, alpha: true, powerPreference: "high-performance", stencil: false }}
         onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}
         dpr={[1, 2]}
-        onPointerMissed={handleReset}
+        onPointerMissed={selectedId === null ? undefined : undefined}
       >
         <StarFieldScene
           stories={filteredStories}
           selectedId={selectedId}
           onSelectStar={(s) => {
             setSelectedId((prev) => (prev === s.id ? null : s.id));
-            // Lazy-load image if not yet fetched
             if (s.imageUrl === "") {
               supabase
                 .from("stories")
@@ -1050,29 +1114,17 @@ export default function CityOfStars() {
                 });
             }
           }}
-          distanceFactor={distanceFactor}
           onUploadClick={() => setIsUploadModalOpen(true)}
           resetTrigger={resetTrigger}
+          bloomBoost={selectedId !== null}
         />
       </Canvas>
 
-      {/* Return button */}
-      {selectedId !== null && (
-        <button
-          onClick={handleReset}
-          className="pointer-events-auto fixed top-10 left-10 z-20 flex items-center gap-2 rounded-full px-4 py-2 text-sm backdrop-blur-md transition-all"
-          style={{
-            background: "rgba(255,255,255,0.07)",
-            border: "1px solid rgba(230,230,250,0.15)",
-            color: "rgba(230,230,250,0.7)",
-            fontFamily: "'Playfair Display', Georgia, serif",
-            fontStyle: "italic",
-            animation: "cityStarsCardIn 0.3s ease-out both",
-          }}
-        >
-          ← Return
-        </button>
-      )}
+      {/* Full-screen story overlay */}
+      {selectedId !== null && (() => {
+        const story = stories.find((s) => s.id === selectedId);
+        return story ? <StoryOverlay story={story} onClose={handleReset} /> : null;
+      })()}
 
       {/* Filter UI */}
       <div className="pointer-events-auto absolute top-8 left-0 right-0 z-20 flex justify-center gap-2">
