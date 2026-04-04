@@ -892,9 +892,10 @@ export default function CityOfStars() {
         setStories(localStories);
       }
 
+      // Don't fetch image_url here — base64 images make rows huge and timeout
       const { data, error } = await supabase
         .from("stories")
-        .select("id,text,image_url,taken_at,location")
+        .select("id,text,taken_at,location")
         .order("taken_at", { ascending: false })
         .limit(120);
 
@@ -921,7 +922,7 @@ export default function CityOfStars() {
           id: row.id,
           position: [v.x, v.y, v.z] as [number, number, number],
           text: row.text,
-          imageUrl: row.image_url ?? "https://picsum.photos/400/300?random=99",
+          imageUrl: "", // loaded lazily on click
           seed: Math.random(),
           date: row.taken_at
             ? new Date(row.taken_at).toLocaleDateString("zh-CN", {
@@ -1008,7 +1009,26 @@ export default function CityOfStars() {
         <StarFieldScene
           stories={filteredStories}
           selectedId={selectedId}
-          onSelectStar={(s) => setSelectedId((prev) => (prev === s.id ? null : s.id))}
+          onSelectStar={(s) => {
+            setSelectedId((prev) => (prev === s.id ? null : s.id));
+            // Lazy-load image if not yet fetched
+            if (s.imageUrl === "") {
+              supabase
+                .from("stories")
+                .select("id,image_url")
+                .eq("id", s.id)
+                .single()
+                .then(({ data }) => {
+                  if (data?.image_url) {
+                    setStories((prev) =>
+                      prev.map((story) =>
+                        story.id === s.id ? { ...story, imageUrl: data.image_url } : story
+                      )
+                    );
+                  }
+                });
+            }
+          }}
           distanceFactor={distanceFactor}
           onUploadClick={() => setIsUploadModalOpen(true)}
         />
