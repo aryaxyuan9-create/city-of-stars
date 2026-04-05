@@ -893,96 +893,81 @@ function StoryOverlay({ story, onClose }: { story: StoryData; onClose: () => voi
       {/* ← Back button */}
       <button
         onClick={handleClose}
-        className="pointer-events-auto absolute top-10 left-10 z-10 flex items-center gap-2 rounded-full px-4 py-2 text-sm backdrop-blur-md transition-opacity hover:opacity-100"
+        className="pointer-events-auto absolute top-10 left-10 z-10 flex items-center gap-2 rounded-full px-4 py-2 text-sm backdrop-blur-md"
         style={{
           background: "rgba(255,255,255,0.07)",
           border: "1px solid rgba(230,230,250,0.15)",
           color: "rgba(230,230,250,0.65)",
           fontFamily: "'Playfair Display', Georgia, serif",
           fontStyle: "italic",
-          opacity: 0.8,
         }}
       >
         ← Back
       </button>
 
-      {/* Top-right metadata */}
-      <div
-        className="absolute top-10 right-10 z-10 text-right pointer-events-none"
-        style={{
-          fontFamily: "'Playfair Display', Georgia, serif",
-          fontStyle: "italic",
-          color: "rgba(230,230,250,0.5)",
-          fontSize: "11px",
-          lineHeight: "2",
-          letterSpacing: "0.08em",
-        }}
-      >
-        {story.location && <div style={{ color: "rgba(230,230,250,0.75)", fontSize: "12px" }}>NYC · {story.location}</div>}
-        <div>{story.date}</div>
-      </div>
+      {/* Main layout: photo left, info right */}
+      <div className="absolute inset-0 flex items-center justify-center gap-16 px-20">
 
-      {/* Central photo — center-upper */}
-      <div className="absolute inset-0 flex items-center justify-center" style={{ paddingBottom: "18vh" }}>
+        {/* Photo */}
         <img
           src={story.imageUrl || ""}
           alt=""
           style={{
-            maxWidth: "40vw",
-            maxHeight: "58vh",
+            maxWidth: "38vw",
+            maxHeight: "62vh",
             objectFit: "contain",
-            border: "1px solid rgba(255,255,255,0.22)",
-            boxShadow: "0 0 80px rgba(255,255,255,0.05), 0 8px 40px rgba(0,0,0,0.6)",
+            flexShrink: 0,
+            border: "1px solid rgba(255,255,255,0.18)",
+            boxShadow: "0 8px 40px rgba(0,0,0,0.6)",
             filter: imgLoaded ? "none" : "blur(12px) grayscale(60%)",
             transition: "filter 1.2s cubic-bezier(0.25,0.46,0.45,0.94)",
           }}
         />
-      </div>
 
-      {/* Story text — center-lower */}
-      <div
-        className="absolute bottom-20 left-0 right-0 flex flex-col items-center px-8 pointer-events-none"
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', width: '100%', maxWidth: '52ch' }}>
-          <span style={{
-            background: '#F5C518',
-            padding: '3px 8px 2px',
-            fontFamily: "'Courier Prime', monospace",
-            fontSize: '11px',
-            fontWeight: 700,
-            letterSpacing: '0.18em',
-            textTransform: 'uppercase',
-            color: '#0a0008',
-          }}>
-            {story.location || 'NYC'}
-          </span>
-
-          <span style={{
-            fontFamily: "'Courier Prime', monospace",
-            fontSize: '10px',
-            letterSpacing: '0.15em',
-            color: 'rgba(255, 255, 255, 0.35)',
-            textTransform: 'uppercase',
-          }}>
-            {story.author_name || 'anonymous'}
-          </span>
-        </div>
-
-        <p
+        {/* Right panel: metadata + story */}
+        <div
           style={{
-            fontFamily: "'Playfair Display', Georgia, serif",
-            fontStyle: "italic",
-            color: "rgba(230,230,250,0.82)",
-            fontSize: "clamp(0.85rem, 1.8vw, 1.1rem)",
-            letterSpacing: "0.12em",
-            lineHeight: "2.2",
-            textAlign: "center",
-            maxWidth: "52ch",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            maxWidth: "34ch",
+            gap: "24px",
           }}
         >
-          {displayedText}
-          <span style={{ animation: "blink 1s step-end infinite" }}>|</span>
-        </p>
+          {/* Metadata */}
+          <div style={{
+            fontFamily: "'Playfair Display', Georgia, serif",
+            fontStyle: "italic",
+            color: "rgba(255,255,255,0.4)",
+            fontSize: "11px",
+            lineHeight: "2",
+            letterSpacing: "0.08em",
+          }}>
+            {story.author_name && (
+              <div style={{ color: "rgba(255,255,255,0.85)", fontSize: "13px", marginBottom: "2px" }}>
+                {story.author_name}
+              </div>
+            )}
+            {story.location && <div>NYC · {story.location}</div>}
+            <div>{story.date}</div>
+          </div>
+
+          {/* Divider */}
+          <div style={{ width: "32px", height: "1px", background: "rgba(255,255,255,0.2)" }} />
+
+          {/* Story text */}
+          <p style={{
+            fontFamily: "'Playfair Display', Georgia, serif",
+            fontStyle: "italic",
+            color: "rgba(255,255,255,0.88)",
+            fontSize: "clamp(0.9rem, 1.6vw, 1.05rem)",
+            letterSpacing: "0.06em",
+            lineHeight: "2",
+          }}>
+            {displayedText}
+            <span style={{ animation: "blink 1s step-end infinite" }}>|</span>
+          </p>
+        </div>
       </div>
     </div>
   );
