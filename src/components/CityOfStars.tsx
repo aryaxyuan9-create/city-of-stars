@@ -586,6 +586,7 @@ function UploadModal({
   const [preview, setPreview] = useState<string | null>(null);
   const [takenAt, setTakenAt] = useState<Date>(new Date());
   const [submitting, setSubmitting] = useState(false);
+  const [authorName, setAuthorName] = useState("");
 
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -628,6 +629,7 @@ function UploadModal({
       image_url: preview,
       taken_at: takenAt.toISOString(),
       location: location.trim() || null,
+      author_name: authorName.trim() || null,
     });
     setSubmitting(false);
     if (error) {
@@ -761,6 +763,40 @@ function UploadModal({
             ))}
             <option value="Somewhere in NYC">Somewhere in NYC</option>
           </select>
+        </div>
+
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{
+            fontSize: '10px',
+            letterSpacing: '0.16em',
+            color: 'rgba(230, 230, 250, 0.4)',
+            textTransform: 'uppercase',
+            marginBottom: '8px',
+            fontFamily: "'Playfair Display', Georgia, serif",
+          }}>
+            Your name
+          </div>
+          <input
+            type="text"
+            value={authorName}
+            onChange={(e) => setAuthorName(e.target.value)}
+            placeholder="optional"
+            maxLength={30}
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              background: 'rgba(0, 0, 128, 0.2)',
+              border: '0.5px solid rgba(230, 230, 250, 0.1)',
+              borderRadius: '10px',
+              padding: '14px 16px',
+              color: 'rgba(230, 230, 250, 0.85)',
+              fontSize: '13px',
+              fontFamily: "'Playfair Display', Georgia, serif",
+              fontStyle: 'italic',
+              letterSpacing: '0.03em',
+              outline: 'none',
+            }}
+          />
         </div>
 
         <button
