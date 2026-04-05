@@ -54,6 +54,7 @@ export type StoryData = {
   date: string;
   taken_at?: string;
   location?: string;
+  author_name?: string;
 };
 
 type StoredStory = {
@@ -184,18 +185,6 @@ function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
       onPointerOver={() => { setHovered(true); document.body.style.cursor = "pointer"; }}
       onPointerOut={() => { setHovered(false); document.body.style.cursor = "default"; }}
     >
-      {/* 内核发光球体 */}
-      <mesh>
-        <sphereGeometry args={[1.45, 32, 32]} />
-        <meshBasicMaterial
-          color={new THREE.Color("#ffe8a0")}
-          transparent
-          opacity={0.13}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-
       <points ref={pointsRef}>
         <bufferGeometry>
           <bufferAttribute
@@ -337,18 +326,6 @@ function ParticleStoryStar({
           color={new THREE.Color('#D4AF5F')}
         />
       </sprite>
-      {isSelected && (
-        <mesh scale={scale * 2.2}>
-          <sphereGeometry args={[0.22, 16, 16]} />
-          <meshBasicMaterial
-            color={new THREE.Color("#ffd27a")}
-            transparent
-            opacity={0.22}
-            depthWrite={false}
-            blending={THREE.AdditiveBlending}
-          />
-        </mesh>
-      )}
     </group>
   );
 }
@@ -561,11 +538,11 @@ function StarFieldScene({
       <EffectComposer enableNormalPass={false} multisampling={0}>
         <SMAA />
         <Bloom
-          luminanceThreshold={bloomBoost ? 0.01 : 0.05}
+          luminanceThreshold={0.05}
           luminanceSmoothing={0.9}
           mipmapBlur
-          intensity={bloomBoost ? 3.5 : 1.8}
-          radius={bloomBoost ? 1.3 : 0.9}
+          intensity={bloomBoost ? 2.4 : 1.8}
+          radius={bloomBoost ? 1.0 : 0.9}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
       </EffectComposer>
@@ -966,6 +943,31 @@ function StoryOverlay({ story, onClose }: { story: StoryData; onClose: () => voi
       <div
         className="absolute bottom-20 left-0 right-0 flex flex-col items-center px-8 pointer-events-none"
       >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', width: '100%', maxWidth: '52ch' }}>
+          <span style={{
+            background: '#F5C518',
+            padding: '3px 8px 2px',
+            fontFamily: "'Courier Prime', monospace",
+            fontSize: '11px',
+            fontWeight: 700,
+            letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            color: '#0a0008',
+          }}>
+            {story.location || 'NYC'}
+          </span>
+
+          <span style={{
+            fontFamily: "'Courier Prime', monospace",
+            fontSize: '10px',
+            letterSpacing: '0.15em',
+            color: 'rgba(255, 255, 255, 0.35)',
+            textTransform: 'uppercase',
+          }}>
+            {story.author_name || 'anonymous'}
+          </span>
+        </div>
+
         <p
           style={{
             fontFamily: "'Playfair Display', Georgia, serif",
@@ -1016,7 +1018,7 @@ export default function CityOfStars() {
       // Don't fetch image_url here — base64 images make rows huge and timeout
       const { data, error } = await supabase
         .from("stories")
-        .select("id,text,taken_at,location")
+        .select("id,text,taken_at,location,author_name")
         .order("taken_at", { ascending: false })
         .limit(120);
 
@@ -1052,6 +1054,7 @@ export default function CityOfStars() {
             : "unknown",
           taken_at: row.taken_at ?? undefined,
           location: row.location ?? undefined,
+          author_name: row.author_name ?? undefined,
         };
       });
       setStories(loaded);
