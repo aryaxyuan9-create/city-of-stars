@@ -8,6 +8,7 @@ import gsap from "gsap";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { X, UploadCloud, Image as ImageIcon, Type, MapPin } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { StoryReader } from './StoryReader';
 
 // 模块级鼠标坐标（归一化 -1~1），子组件可直接读取，无需 prop 传递
 export const mouse3D = { x: 0, y: 0 };
@@ -981,6 +982,8 @@ export default function CityOfStars() {
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resetTrigger, setResetTrigger] = useState(0);
+  const [readerOpen, setReaderOpen] = useState(false);
+  const [readerIndex, setReaderIndex] = useState(0);
   const [distanceFactor, setDistanceFactor] = useState(10);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
@@ -1120,12 +1123,12 @@ export default function CityOfStars() {
           stories={filteredStories}
           selectedId={selectedId}
           onSelectStar={(s) => {
-            setSelectedId((prev) => (prev === s.id ? null : s.id));
-            if (s.imageUrl === "") {
+            // 原有的 imageUrl 懒加载逻辑保持不动
+            if (s.imageUrl === '') {
               supabase
-                .from("stories")
-                .select("id,image_url")
-                .eq("id", s.id)
+                .from('stories')
+                .select('id,image_url')
+                .eq('id', s.id)
                 .single()
                 .then(({ data }) => {
                   if (data?.image_url) {
@@ -1133,10 +1136,14 @@ export default function CityOfStars() {
                       prev.map((story) =>
                         story.id === s.id ? { ...story, imageUrl: data.image_url } : story
                       )
-                    );
+                    )
                   }
-                });
+                })
             }
+            // 新增：打开 StoryReader，找到点击的星星在 stories 里的 index
+            const index = stories.findIndex((story) => story.id === s.id)
+            setReaderIndex(index >= 0 ? index : 0)
+            setReaderOpen(true)
           }}
           onUploadClick={() => setIsUploadModalOpen(true)}
           resetTrigger={resetTrigger}
@@ -1149,6 +1156,15 @@ export default function CityOfStars() {
         const story = stories.find((s) => s.id === selectedId);
         return story ? <StoryOverlay story={story} onClose={handleReset} /> : null;
       })()}
+
+      {/* StoryReader */}
+      {readerOpen && (
+        <StoryReader
+          stories={stories}
+          initialIndex={readerIndex}
+          onClose={() => setReaderOpen(false)}
+        />
+      )}
 
       {/* Filter UI */}
       <div className="pointer-events-auto absolute top-8 left-0 right-0 z-20 flex justify-center gap-2">
