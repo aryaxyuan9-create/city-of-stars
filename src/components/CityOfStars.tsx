@@ -976,10 +976,7 @@ function StoryOverlay({ story, onClose }: { story: StoryData; onClose: () => voi
 
 // --- 主组件 ---
 export default function CityOfStars() {
-  const [stories, setStories] = useState<StoryData[]>(() => {
-    const localStories = readLocalStories();
-    return localStories.length > 0 ? localStories : DEFAULT_STORIES;
-  });
+  const [stories, setStories] = useState<StoryData[]>(DEFAULT_STORIES);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resetTrigger, setResetTrigger] = useState(0);
   const [readerOpen, setReaderOpen] = useState(false);
@@ -997,12 +994,6 @@ export default function CityOfStars() {
   // 启动时从 Supabase 拉取所有故事
   useEffect(() => {
     const fetchStories = async () => {
-      // If local cache exists, keep using it to avoid blocking UX on slow cloud queries.
-      const localStories = readLocalStories();
-      if (localStories.length > 0) {
-        setStories(localStories);
-      }
-
       // Don't fetch image_url here — base64 images make rows huge and timeout
       const { data, error } = await supabase
         .from("stories")
@@ -1012,21 +1003,14 @@ export default function CityOfStars() {
 
       if (error) {
         console.error("Failed to fetch stories:", error);
-        // Only show blocking error when no local data is available.
-        if (localStories.length === 0) {
-          setLoadError(error.message);
-        } else {
-          setLoadError(null);
-        }
+        setLoadError(error.message);
         return;
       }
 
       setLoadError(null);
 
-      // Always update from Supabase — even if empty, overwrite cache so deletions are reflected
       if (!data || data.length === 0) {
         setStories(DEFAULT_STORIES);
-        writeLocalStories([]);
         return;
       }
 
@@ -1052,7 +1036,6 @@ export default function CityOfStars() {
         };
       });
       setStories(loaded);
-      writeLocalStories(loaded);
     };
 
     fetchStories();
@@ -1097,7 +1080,6 @@ export default function CityOfStars() {
           taken_at: newStory.takenAt,
         },
       ];
-      writeLocalStories(next);
       return next;
     });
   };
