@@ -1022,7 +1022,13 @@ export default function CityOfStars() {
       }
 
       setLoadError(null);
-      if (!data || data.length === 0) return;
+
+      // Always update from Supabase — even if empty, overwrite cache so deletions are reflected
+      if (!data || data.length === 0) {
+        setStories(DEFAULT_STORIES);
+        writeLocalStories([]);
+        return;
+      }
 
       const loadedAsc = [...data].reverse();
       const loaded: StoryData[] = loadedAsc.map((row, i) => {
