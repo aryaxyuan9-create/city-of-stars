@@ -66,127 +66,238 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
   const displayedText = useTypewriter(story.text, typingActive, 42)
 
   const navBtn: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.07)',
-    border: '1px solid rgba(230,230,250,0.15)',
-    color: 'rgba(230,230,250,0.6)',
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid rgba(230,230,250,0.12)',
+    color: 'rgba(230,230,250,0.5)',
     borderRadius: '50%',
-    width: '40px',
-    height: '40px',
+    width: '44px',
+    height: '44px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     fontFamily: "'Playfair Display', Georgia, serif",
-    fontSize: '18px',
+    fontSize: '20px',
     cursor: 'pointer',
     flexShrink: 0,
+    transition: 'background 0.2s, color 0.2s, border-color 0.2s',
+  }
+
+  const navBtnHover = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.background = 'rgba(255,255,255,0.13)'
+    e.currentTarget.style.color = 'rgba(230,230,250,0.9)'
+    e.currentTarget.style.borderColor = 'rgba(230,230,250,0.3)'
+  }
+  const navBtnLeave = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
+    e.currentTarget.style.color = 'rgba(230,230,250,0.5)'
+    e.currentTarget.style.borderColor = 'rgba(230,230,250,0.12)'
   }
 
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 pointer-events-none"
-      style={{ opacity: 0 }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 50,
+        opacity: 0,
+        display: 'grid',
+        gridTemplateColumns: '3fr 2fr',
+        minHeight: '100vh',
+        padding: '5rem',
+        gap: '5rem',
+        boxSizing: 'border-box',
+      }}
     >
-      {/* Blur backdrop */}
-      <div
-        className="absolute inset-0"
-        style={{ backdropFilter: 'blur(18px) brightness(0.5)', background: 'rgba(5,3,20,0.55)' }}
-      />
+      {/* 模糊背景 */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        backdropFilter: 'blur(18px) brightness(0.45)',
+        background: 'rgba(5,3,20,0.6)',
+        zIndex: 0,
+      }} />
 
-      {/* ← Close */}
+      {/* Back button — 左上角，绝对定位在整个覆盖层 */}
       <button
         onClick={handleClose}
-        className="pointer-events-auto absolute top-10 left-10 z-10 flex items-center gap-2 rounded-full px-4 py-2 text-sm"
         style={{
-          background: 'rgba(255,255,255,0.07)',
-          border: '1px solid rgba(230,230,250,0.15)',
-          color: 'rgba(230,230,250,0.65)',
+          position: 'absolute', top: '2.5rem', left: '5rem',
+          zIndex: 2,
+          background: 'rgba(255,255,255,0.06)',
+          border: '1px solid rgba(230,230,250,0.12)',
+          color: 'rgba(230,230,250,0.55)',
           fontFamily: "'Playfair Display', Georgia, serif",
           fontStyle: 'italic',
+          fontSize: '14px',
+          borderRadius: '999px',
+          padding: '6px 18px',
+          cursor: 'pointer',
+          pointerEvents: 'auto',
+          transition: 'background 0.2s, color 0.2s, border-color 0.2s',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.background = 'rgba(255,255,255,0.11)'
+          e.currentTarget.style.color = 'rgba(230,230,250,0.9)'
+          e.currentTarget.style.borderColor = 'rgba(230,230,250,0.28)'
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
+          e.currentTarget.style.color = 'rgba(230,230,250,0.55)'
+          e.currentTarget.style.borderColor = 'rgba(230,230,250,0.12)'
         }}
       >
         ← Back
       </button>
 
-      {/* Counter */}
-      <div
-        className="absolute top-10 right-10 z-10 pointer-events-none"
-        style={{
-          fontFamily: "'Playfair Display', Georgia, serif",
-          fontStyle: 'italic',
-          color: 'rgba(230,230,250,0.35)',
-          fontSize: '11px',
-          letterSpacing: '0.1em',
-        }}
-      >
-        {index + 1} / {stories.length}
-      </div>
-
-      {/* Main content */}
-      <div className="absolute inset-0 flex items-center justify-center gap-12 px-20">
-
-        {/* Prev */}
-        <button className="pointer-events-auto" style={navBtn} onClick={goPrev}>‹</button>
-
-        {/* Photo */}
-        <img
-          key={story.id}
-          src={story.imageUrl || ''}
-          alt=""
-          style={{
-            maxWidth: '38vw',
-            maxHeight: '62vh',
-            objectFit: 'contain',
-            flexShrink: 0,
-            border: '1px solid rgba(255,255,255,0.18)',
-            boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
-            filter: imgLoaded ? 'none' : 'blur(12px) grayscale(60%)',
-            transition: 'filter 1.1s cubic-bezier(0.25,0.46,0.45,0.94)',
-          }}
-        />
-
-        {/* Right panel */}
-        <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '30ch', gap: '20px' }}>
-
-          {/* Metadata */}
-          <div style={{
-            fontFamily: "'Playfair Display', Georgia, serif",
-            fontStyle: 'italic',
-            lineHeight: '2',
-            letterSpacing: '0.08em',
-          }}>
-            {story.author_name && (
-              <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '13px', marginBottom: '2px' }}>
-                {story.author_name}
-              </div>
-            )}
-            {story.location && (
-              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>NYC · {story.location}</div>
-            )}
-            <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px' }}>{story.date}</div>
-          </div>
-
-          {/* Divider */}
-          <div style={{ width: '32px', height: '1px', background: 'rgba(255,255,255,0.18)' }} />
-
-          {/* Story text */}
-          <p style={{
-            fontFamily: "'Playfair Display', Georgia, serif",
-            fontStyle: 'italic',
-            color: 'rgba(255,255,255,0.88)',
-            fontSize: 'clamp(0.9rem, 1.6vw, 1.05rem)',
-            letterSpacing: '0.06em',
-            lineHeight: '2',
-          }}>
-            {displayedText}
-            <span style={{ animation: 'blink 1s step-end infinite' }}>|</span>
-          </p>
+      {/* 左栏 */}
+      <div style={{
+        position: 'relative', zIndex: 1,
+        display: 'flex', flexDirection: 'column',
+        justifyContent: 'space-between',
+      }}>
+        {/* 图片 */}
+        <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'center' }}>
+          <img
+            key={story.id}
+            src={story.imageUrl || ''}
+            alt=""
+            style={{
+              width: '90%',
+              maxHeight: '70vh',
+              objectFit: 'contain',
+              border: '0.5px solid rgba(255,255,255,0.15)',
+              cursor: 'zoom-in',
+              filter: imgLoaded
+                ? 'contrast(1.05) saturate(0.9)'
+                : 'blur(12px) grayscale(60%)',
+              transition: 'filter 1.1s cubic-bezier(0.25,0.46,0.45,0.94)',
+            }}
+            onClick={() => window.open(story.imageUrl || '', '_blank')}
+          />
         </div>
 
-        {/* Next */}
-        <button className="pointer-events-auto" style={navBtn} onClick={goNext}>›</button>
-
+        {/* 目录导航：上一张 + 当前 + 下一张，竖排 */}
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: '10px',
+          marginTop: 'auto', paddingTop: '2rem',
+        }}>
+          {[
+            (index - 1 + stories.length) % stories.length,
+            index,
+            (index + 1) % stories.length,
+          ].filter((v, i, arr) => arr.indexOf(v) === i).map((i) => {
+            const s = stories[i]
+            return (
+              <div
+                key={s.id}
+                onClick={() => setIndex(i)}
+                style={{
+                  cursor: 'pointer',
+                  fontFamily: "'Playfair Display', Georgia, serif",
+                  fontStyle: 'italic',
+                  fontSize: '13px',
+                  color: i === index
+                    ? 'rgba(245,197,24,0.9)'
+                    : 'rgba(255,255,255,0.28)',
+                  fontWeight: i === index ? 500 : 400,
+                  transition: 'color 0.2s',
+                  display: 'flex', gap: '10px', alignItems: 'baseline',
+                }}
+              >
+                <span style={{ fontFamily: 'monospace', fontSize: '10px', letterSpacing: '0.08em' }}>
+                  P.{String(i + 1).padStart(2, '0')}
+                </span>
+                <span style={{ maxWidth: '18ch', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                  {s.title || s.text?.slice(0, 20) || 'untitled'}
+                </span>
+              </div>
+            )
+          })}
+        </div>
       </div>
+
+      {/* 右栏 */}
+      <div style={{
+        position: 'relative', zIndex: 1,
+        display: 'flex', flexDirection: 'column',
+      }}>
+        {/* 元数据 — 一行，右对齐，顶部 */}
+        <div style={{
+          display: 'flex', gap: '20px', alignItems: 'baseline',
+          justifyContent: 'flex-end',
+          paddingTop: '0',
+          flexWrap: 'wrap',
+        }}>
+          {[
+            { label: 'Location', value: story.location || 'NYC' },
+            { label: 'Date',     value: story.date },
+            { label: 'Author',   value: story.author_name || 'anonymous' },
+          ].map(({ label, value }) => (
+            <div key={label} style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '9px', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontFamily: 'monospace' }}>{label}</div>
+              <div style={{ fontSize: '13px', color: '#fff', fontFamily: "'Playfair Display', Georgia, serif", fontStyle: 'italic' }}>{value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* 章节编号 */}
+        <div style={{
+          marginTop: '3rem',
+          fontSize: '12px',
+          color: 'rgba(255,255,255,0.3)',
+          fontFamily: 'monospace',
+          letterSpacing: '0.1em',
+        }}>
+          {['I','II','III','IV','V','VI','VII','VIII','IX','X'][index] || `${index + 1}`}.
+        </div>
+
+        {/* 主标题 */}
+        <h1 style={{
+          fontFamily: "'Playfair Display', Georgia, serif",
+          fontSize: 'clamp(2.5rem, 5vw, 4rem)',
+          fontWeight: 400,
+          fontStyle: 'italic',
+          lineHeight: 0.95,
+          letterSpacing: '-0.01em',
+          color: '#ffd700',
+          margin: '1rem 0 3rem',
+        }}>
+          {story.title || story.text?.slice(0, 40) || 'untitled'}
+        </h1>
+
+        {/* 正文 */}
+        <p style={{
+          fontFamily: "'Playfair Display', Georgia, serif",
+          fontStyle: 'italic',
+          fontSize: '16px',
+          lineHeight: 1.85,
+          color: 'rgba(255,255,255,0.65)',
+          maxWidth: '85%',
+        }}>
+          {displayedText || ''}
+          <span style={{ animation: 'blink 1s step-end infinite' }}>|</span>
+        </p>
+
+        {/* 底部装饰线 + 下一篇 */}
+        <div style={{
+          marginTop: 'auto',
+          paddingTop: '2rem',
+          borderTop: '0.5px solid rgba(255,255,255,0.1)',
+        }}>
+          <div style={{
+            fontSize: '10px',
+            letterSpacing: '0.2em',
+            color: 'rgba(255,255,255,0.22)',
+            fontFamily: 'monospace',
+            textTransform: 'uppercase',
+          }}>
+            {stories[(index + 1) % stories.length]?.location
+              ? `Next · ${stories[(index + 1) % stories.length].location}`
+              : 'Next · NYC'}
+          </div>
+        </div>
+      </div>
+
+      {/* pointer-events 覆盖层 */}
+      <div style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'auto' }} />
     </div>
   )
 }

@@ -56,6 +56,7 @@ export type StoryData = {
   taken_at?: string;
   location?: string;
   author_name?: string;
+  title?: string;
 };
 
 type StoredStory = {
@@ -126,26 +127,66 @@ function createSoftDotTexture(): THREE.CanvasTexture {
 }
 
 // --- 1. 中央柔和粒子星体 (上传入口) ---
+const SPARSE_COUNT = 40;
+
 function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
+  const groupRef  = useRef<THREE.Group>(null!);
   const pointsRef = useRef<THREE.Points>(null!);
+  const sparseRef = useRef<THREE.Points>(null!);
   const dotTexture = useMemo(() => createSoftDotTexture(), []);
   const [hovered, setHovered] = useState(false);
   const rotSpeedRef = useRef(0.001);
 
-  // 当前帧写入的可变缓冲；origPos 存原始坐标用于噪声叠加基准
-  const { positions, origPos } = useMemo(() => {
-    const count = 2000;
-    const positions = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      const r = 1.5 + Math.random() * 0.5;
+  // 稀疏彩色粒子数据
+  const { sparsePositions, sparseBaseColors, sparseColorBuf, sparseFlicker, sparseDepthFactors } = useMemo(() => {
+    const neonBlue    = new THREE.Color(80 / 255, 190 / 255, 255 / 255);
+    const cyberPurple = new THREE.Color(160 / 255, 80 / 255, 255 / 255);
+    const sparsePositions    = new Float32Array(SPARSE_COUNT * 3);
+    const sparseBaseColors   = new Float32Array(SPARSE_COUNT * 3);
+    const sparseDepthFactors = new Float32Array(SPARSE_COUNT);
+    const sparseFlicker: Array<{ speed: number; phase: number }> = [];
+    for (let i = 0; i < SPARSE_COUNT; i++) {
+      const r     = 2.0 * Math.cbrt(Math.random()); // uniform volume density
       const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      positions[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      positions[i * 3 + 2] = r * Math.cos(phi);
+      const phi   = Math.acos(2 * Math.random() - 1);
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.sin(phi) * Math.sin(theta);
+      const z = r * Math.cos(phi);
+      sparsePositions[i * 3]     = x;
+      sparsePositions[i * 3 + 1] = y;
+      sparsePositions[i * 3 + 2] = z;
+      const c = i % 2 === 0 ? neonBlue : cyberPurple;
+      sparseBaseColors[i * 3]     = c.r;
+      sparseBaseColors[i * 3 + 1] = c.g;
+      sparseBaseColors[i * 3 + 2] = c.b;
+      sparseFlicker.push({ speed: 1.5 + Math.random() * 3.5, phase: Math.random() * Math.PI * 2 });
+      sparseDepthFactors[i] = Math.min(1.3, Math.max(0.6, 0.95 + 0.35 * (z / 2.0)));
+    }
+    return { sparsePositions, sparseBaseColors, sparseColorBuf: sparseBaseColors.slice(), sparseFlicker, sparseDepthFactors };
+  }, []);
+
+  // 当前帧写入的可变缓冲；origPos 存原始坐标用于噪声叠加基准
+  const { positions, origPos, goldColorBuf } = useMemo(() => {
+    const count = 2000;
+    const positions    = new Float32Array(count * 3);
+    const goldColorBuf = new Float32Array(count * 3); // grayscale depth factor, tinted by material color
+    for (let i = 0; i < count; i++) {
+      const r     = 2.0 * Math.cbrt(Math.random()); // uniform volume density
+      const theta = Math.random() * Math.PI * 2;
+      const phi   = Math.acos(2 * Math.random() - 1);
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.sin(phi) * Math.sin(theta);
+      const z = r * Math.cos(phi);
+      positions[i * 3]     = x;
+      positions[i * 3 + 1] = y;
+      positions[i * 3 + 2] = z;
+      const d = Math.min(1.3, Math.max(0.6, 0.95 + 0.35 * (z / 2.0)));
+      goldColorBuf[i * 3]     = d;
+      goldColorBuf[i * 3 + 1] = d;
+      goldColorBuf[i * 3 + 2] = d;
     }
     const origPos = positions.slice(); // 原始坐标快照
-    return { positions, origPos };
+    return { positions, origPos, goldColorBuf };
   }, []);
 
   useFrame((state) => {
@@ -163,6 +204,12 @@ function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
     const targetScale = hovered ? 1.08 : 1.0;
     pts.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.06);
 
+    // 呼吸动画：group 缩放 0.88–1.12，material 透明度 0.7–1.0，周期 ~4s
+    const breath = Math.sin(t * Math.PI * 0.5); // period = 4s
+    const breathScale = 1.0 + 0.12 * breath;
+    groupRef.current.scale.setScalar(breathScale);
+    (pts.material as THREE.PointsMaterial).opacity = 0.85 + 0.15 * breath;
+
     // 逐粒子噪声扰动（有机烟雾感）
     const attr = pts.geometry.attributes.position;
     const buf = attr.array as Float32Array;
@@ -178,10 +225,39 @@ function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
       buf[i * 3 + 2] = oz + Math.sin(t * 0.9 + i * 0.211) * NOISE_AMP;
     }
     attr.needsUpdate = true;
+
+    // 深度编码：根据当前 z 更新金色粒子顶点颜色亮度（material color "#FFE082" 作为倍增器）
+    const goldColorAttr = pts.geometry.attributes.color;
+    if (goldColorAttr) {
+      const gcBuf = goldColorAttr.array as Float32Array;
+      for (let i = 0; i < count; i++) {
+        const z = buf[i * 3 + 2];
+        const d = Math.min(1.3, Math.max(0.6, 0.95 + 0.35 * (z / 2.0)));
+        gcBuf[i * 3]     = d;
+        gcBuf[i * 3 + 1] = d;
+        gcBuf[i * 3 + 2] = d;
+      }
+      goldColorAttr.needsUpdate = true;
+    }
+
+    // 稀疏彩色闪烁粒子（加入深度系数）
+    if (sparseRef.current) {
+      const colorAttr = sparseRef.current.geometry.attributes.color;
+      const cbuf = colorAttr.array as Float32Array;
+      for (let i = 0; i < SPARSE_COUNT; i++) {
+        const brightness = (0.5 + 0.5 * Math.sin(t * sparseFlicker[i].speed + sparseFlicker[i].phase))
+                           * sparseDepthFactors[i];
+        cbuf[i * 3]     = sparseBaseColors[i * 3]     * brightness;
+        cbuf[i * 3 + 1] = sparseBaseColors[i * 3 + 1] * brightness;
+        cbuf[i * 3 + 2] = sparseBaseColors[i * 3 + 2] * brightness;
+      }
+      colorAttr.needsUpdate = true;
+    }
   });
 
   return (
     <group
+      ref={groupRef}
       onClick={(e) => { e.stopPropagation(); onUploadClick(); }}
       onPointerOver={() => { setHovered(true); document.body.style.cursor = "pointer"; }}
       onPointerOut={() => { setHovered(false); document.body.style.cursor = "default"; }}
@@ -194,10 +270,17 @@ function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
             array={positions}
             itemSize={3}
           />
+          <bufferAttribute
+            attach="attributes-color"
+            count={goldColorBuf.length / 3}
+            array={goldColorBuf}
+            itemSize={3}
+          />
         </bufferGeometry>
         <pointsMaterial
           size={0.12}
           color="#FFE082"
+          vertexColors
           map={dotTexture}
           transparent
           alphaTest={0.01}
@@ -206,33 +289,36 @@ function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
           sizeAttenuation
         />
       </points>
+
+      {/* 稀疏彩色闪烁粒子层 */}
+      <points ref={sparseRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={SPARSE_COUNT}
+            array={sparsePositions}
+            itemSize={3}
+          />
+          <bufferAttribute
+            attach="attributes-color"
+            count={SPARSE_COUNT}
+            array={sparseColorBuf}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.06}
+          vertexColors
+          map={dotTexture}
+          transparent
+          alphaTest={0.001}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          sizeAttenuation
+        />
+      </points>
     </group>
   );
-}
-
-// --- 打字机 hook ---
-function useTypewriter(text: string, isActive: boolean, speed = 38) {
-  const [displayed, setDisplayed] = useState("");
-
-  useEffect(() => {
-    if (!isActive) {
-      setDisplayed("");
-      return;
-    }
-    let i = 0;
-    setDisplayed("");
-    const interval = setInterval(() => {
-      if (i < text.length) {
-        setDisplayed(text.slice(0, i + 1));
-        i++;
-      } else {
-        clearInterval(interval);
-      }
-    }, speed);
-    return () => clearInterval(interval);
-  }, [text, isActive, speed]);
-
-  return displayed;
 }
 
 // --- 2. 故事星星 ---
@@ -539,10 +625,10 @@ function StarFieldScene({
       <EffectComposer enableNormalPass={false} multisampling={0}>
         <SMAA />
         <Bloom
-          luminanceThreshold={0.05}
-          luminanceSmoothing={0.9}
+          luminanceThreshold={0.2}
+          luminanceSmoothing={0.85}
           mipmapBlur
-          intensity={bloomBoost ? 2.4 : 1.8}
+          intensity={bloomBoost ? 2.4 : 1.4}
           radius={bloomBoost ? 1.0 : 0.9}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
@@ -559,6 +645,7 @@ function UploadModal({
   onClose: () => void;
   onUpload: (story: { text: string; imageUrl: string | null; takenAt: string }) => void;
 }) {
+  const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [location, setLocation] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
@@ -603,6 +690,7 @@ function UploadModal({
     }
     setSubmitting(true);
     const { error } = await supabase.from("stories").insert({
+      title: title.trim() || null,
       text,
       image_url: preview,
       taken_at: takenAt.toISOString(),
@@ -614,6 +702,7 @@ function UploadModal({
       console.error("Cloud upload failed, using local backup:", error);
       alert("Cloud upload failed, but saved on this browser.");
     }
+    setTitle('');
     onUpload({ text, imageUrl: preview, takenAt: takenAt.toISOString() });
     onClose();
   };
@@ -630,7 +719,9 @@ function UploadModal({
         <button
           onClick={onClose}
           className="absolute right-5 top-5 transition-colors"
-          style={{ color: 'rgba(230, 230, 250, 0.4)' }}
+          style={{ color: 'rgba(230, 230, 250, 0.3)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'rgba(230,230,250,0.75)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(230,230,250,0.3)')}
         >
           <X size={20} />
         </button>
@@ -664,8 +755,8 @@ function UploadModal({
             <span style={{ color: 'rgba(230, 230, 250, 0.4)' }}>Your NYC moment</span>
           </label>
           <div
-            className="group relative flex h-44 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed transition-colors"
-            style={{ background: 'rgba(0, 0, 128, 0.2)', borderColor: 'rgba(230, 230, 250, 0.1)' }}
+            className="group relative flex h-44 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed transition-all"
+            style={{ background: 'rgba(10,8,40,0.55)', borderColor: 'rgba(196,174,244,0.15)' }}
           >
             {preview ? (
               <img src={preview} alt="Preview" className="h-full w-full object-cover" />
@@ -684,6 +775,32 @@ function UploadModal({
           </div>
         </div>
 
+        {/* Title 输入 */}
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{
+            fontSize: '10px',
+            letterSpacing: '0.16em',
+            color: 'rgba(230, 230, 250, 0.4)',
+            textTransform: 'uppercase',
+            marginBottom: '8px',
+            fontFamily: "'Playfair Display', Georgia, serif",
+          }}>
+            Title
+          </div>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="name this moment..."
+            maxLength={60}
+            className="city-input-field"
+            style={{
+              fontFamily: "'Playfair Display', Georgia, serif",
+              fontStyle: 'italic',
+            }}
+          />
+        </div>
+
         {/* 文字输入 */}
         <div className="mb-4">
           <label className="mb-2 flex items-center gap-2 text-sm font-medium">
@@ -695,12 +812,8 @@ function UploadModal({
             onChange={(e) => setText(e.target.value)}
             placeholder="a sentence, or just a few words..."
             rows={3}
-            className="w-full resize-none rounded-xl p-4 text-sm outline-none transition-colors"
-            style={{
-              background: 'rgba(0, 0, 128, 0.2)',
-              border: '1px solid rgba(230, 230, 250, 0.1)',
-              color: '#E6E6FA',
-            }}
+            className="city-input-field resize-none"
+            style={{ borderRadius: '12px' }}
           />
         </div>
 
@@ -713,20 +826,11 @@ function UploadModal({
           <select
             value={location}
             onChange={(e) => setLocation(e.target.value)}
+            className="city-input-field"
             style={{
-              width: '100%',
-              background: 'rgba(0, 0, 128, 0.2)',
-              border: '0.5px solid rgba(230, 230, 250, 0.1)',
-              borderRadius: '10px',
-              padding: '14px 16px',
               color: location ? 'rgba(230, 230, 250, 0.85)' : 'rgba(230, 230, 250, 0.25)',
-              fontSize: '13px',
-              fontFamily: "'Playfair Display', Georgia, serif",
-              fontStyle: 'italic',
-              letterSpacing: '0.03em',
               appearance: 'none',
               cursor: 'pointer',
-              outline: 'none',
             }}
           >
             <option value="" disabled style={{ color: '#333' }}>
@@ -760,20 +864,7 @@ function UploadModal({
             onChange={(e) => setAuthorName(e.target.value)}
             placeholder="optional"
             maxLength={30}
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              background: 'rgba(0, 0, 128, 0.2)',
-              border: '0.5px solid rgba(230, 230, 250, 0.1)',
-              borderRadius: '10px',
-              padding: '14px 16px',
-              color: 'rgba(230, 230, 250, 0.85)',
-              fontSize: '13px',
-              fontFamily: "'Playfair Display', Georgia, serif",
-              fontStyle: 'italic',
-              letterSpacing: '0.03em',
-              outline: 'none',
-            }}
+            className="city-input-field"
           />
         </div>
 
@@ -782,13 +873,17 @@ function UploadModal({
           disabled={submitting}
           className="w-full rounded-xl py-3 transition-all active:scale-[0.98]"
           style={{
-            background: submitting ? 'rgba(255,236,139,0.5)' : '#FFEC8B',
-            color: '#1C1C1C',
+            background: submitting
+              ? 'rgba(232,213,163,0.35)'
+              : 'linear-gradient(135deg, #F0E6C8 0%, #E8D5A3 55%, #d4b97a 100%)',
+            color: '#1C1430',
             fontFamily: "'Playfair Display', Georgia, serif",
             fontStyle: 'italic',
             fontWeight: 500,
             fontSize: '1rem',
             cursor: submitting ? 'wait' : 'pointer',
+            letterSpacing: '0.04em',
+            boxShadow: submitting ? 'none' : '0 2px 20px rgba(232,213,163,0.2)',
           }}
         >
           {submitting ? 'Uploading...' : 'Light Up This Star ✦'}
@@ -854,126 +949,6 @@ const DEFAULT_STORIES: StoryData[] = STORY_SEEDS.map((s, i) => {
   return { ...s, position: [v.x, v.y, v.z] as [number, number, number] };
 });
 
-// --- Story Overlay (Album Atlas style) ---
-function StoryOverlay({ story, onClose }: { story: StoryData; onClose: () => void }) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const [imgLoaded, setImgLoaded] = useState(false);
-  const [typingActive, setTypingActive] = useState(false);
-  const displayedText = useTypewriter(story.text, typingActive, 45);
-
-  useEffect(() => {
-    // Fade in
-    if (overlayRef.current) {
-      gsap.fromTo(overlayRef.current, { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "power2.inOut" });
-    }
-    const t1 = setTimeout(() => setImgLoaded(true), 200);
-    const t2 = setTimeout(() => setTypingActive(true), 700);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, []);
-
-  const handleClose = () => {
-    if (overlayRef.current) {
-      gsap.to(overlayRef.current, { opacity: 0, duration: 0.4, ease: "power2.inOut", onComplete: onClose });
-    } else {
-      onClose();
-    }
-  };
-
-  return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-40 pointer-events-none"
-      style={{ opacity: 0 }}
-    >
-      {/* Blur backdrop */}
-      <div
-        className="absolute inset-0"
-        style={{ backdropFilter: "blur(16px) brightness(0.55)", background: "rgba(5,3,20,0.5)" }}
-      />
-
-      {/* ← Back button */}
-      <button
-        onClick={handleClose}
-        className="pointer-events-auto absolute top-10 left-10 z-10 flex items-center gap-2 rounded-full px-4 py-2 text-sm backdrop-blur-md"
-        style={{
-          background: "rgba(255,255,255,0.07)",
-          border: "1px solid rgba(230,230,250,0.15)",
-          color: "rgba(230,230,250,0.65)",
-          fontFamily: "'Playfair Display', Georgia, serif",
-          fontStyle: "italic",
-        }}
-      >
-        ← Back
-      </button>
-
-      {/* Main layout: photo left, info right */}
-      <div className="absolute inset-0 flex items-center justify-center gap-16 px-20">
-
-        {/* Photo */}
-        <img
-          src={story.imageUrl || ""}
-          alt=""
-          style={{
-            maxWidth: "38vw",
-            maxHeight: "62vh",
-            objectFit: "contain",
-            flexShrink: 0,
-            border: "1px solid rgba(255,255,255,0.18)",
-            boxShadow: "0 8px 40px rgba(0,0,0,0.6)",
-            filter: imgLoaded ? "none" : "blur(12px) grayscale(60%)",
-            transition: "filter 1.2s cubic-bezier(0.25,0.46,0.45,0.94)",
-          }}
-        />
-
-        {/* Right panel: metadata + story */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            maxWidth: "34ch",
-            gap: "24px",
-          }}
-        >
-          {/* Metadata */}
-          <div style={{
-            fontFamily: "'Playfair Display', Georgia, serif",
-            fontStyle: "italic",
-            color: "rgba(255,255,255,0.4)",
-            fontSize: "11px",
-            lineHeight: "2",
-            letterSpacing: "0.08em",
-          }}>
-            {story.author_name && (
-              <div style={{ color: "rgba(255,255,255,0.85)", fontSize: "13px", marginBottom: "2px" }}>
-                {story.author_name}
-              </div>
-            )}
-            {story.location && <div>NYC · {story.location}</div>}
-            <div>{story.date}</div>
-          </div>
-
-          {/* Divider */}
-          <div style={{ width: "32px", height: "1px", background: "rgba(255,255,255,0.2)" }} />
-
-          {/* Story text */}
-          <p style={{
-            fontFamily: "'Playfair Display', Georgia, serif",
-            fontStyle: "italic",
-            color: "rgba(255,255,255,0.88)",
-            fontSize: "clamp(0.9rem, 1.6vw, 1.05rem)",
-            letterSpacing: "0.06em",
-            lineHeight: "2",
-          }}>
-            {displayedText}
-            <span style={{ animation: "blink 1s step-end infinite" }}>|</span>
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // --- 主组件 ---
 export default function CityOfStars() {
   const [stories, setStories] = useState<StoryData[]>(DEFAULT_STORIES);
@@ -983,8 +958,8 @@ export default function CityOfStars() {
   const [readerIndex, setReaderIndex] = useState(0);
   const [distanceFactor, setDistanceFactor] = useState(10);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedNeighborhood, setSelectedNeighborhood] = useState<string | null>(null);
 
   const handleReset = () => {
     setSelectedId(null);
@@ -1041,15 +1016,10 @@ export default function CityOfStars() {
     fetchStories();
   }, []);
 
-  const filteredStories = stories.filter(story => {
-    if (filter === 'all') return true;
-    const date = new Date(story.taken_at || story.date.replace(/\./g, '-'));
-    const now = new Date();
-    if (filter === 'today') return date.toDateString() === now.toDateString();
-    if (filter === 'week')  return (now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24) <= 7;
-    if (filter === 'month') return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-    return true;
-  });
+
+  const filteredStories = selectedNeighborhood
+    ? stories.filter((s) => s.location === selectedNeighborhood)
+    : stories;
 
   useEffect(() => {
     const q = () => {
@@ -1098,6 +1068,58 @@ export default function CityOfStars() {
           to   { opacity: 1; transform: translateY(0)  scale(1); }
         }
         @keyframes blink { 50% { opacity: 0; } }
+        @keyframes titleGlow {
+          0%, 100% { text-shadow: 0 0 24px rgba(232,213,163,0.35), 0 0 48px rgba(196,174,244,0.15); }
+          50%       { text-shadow: 0 0 32px rgba(232,213,163,0.55), 0 0 64px rgba(196,174,244,0.25); }
+        }
+        .city-filter-btn {
+          color: rgba(230,230,250,0.35);
+          font-family: 'Playfair Display', Georgia, serif;
+          font-style: italic;
+          font-size: 13px;
+          letter-spacing: 0.05em;
+          background: none;
+          border: none;
+          cursor: pointer;
+          padding: 4px 14px;
+          border-bottom: 1px solid transparent;
+          transition: color 0.25s, border-color 0.25s;
+        }
+        .city-filter-btn:hover { color: rgba(230,230,250,0.7); }
+        .city-filter-btn.active { color: #E8D5A3; border-bottom-color: #E8D5A3; }
+        .city-back-btn {
+          background: rgba(255,255,255,0.06);
+          border: 1px solid rgba(230,230,250,0.12);
+          color: rgba(230,230,250,0.55);
+          font-family: 'Playfair Display', Georgia, serif;
+          font-style: italic;
+          transition: background 0.2s, color 0.2s, border-color 0.2s;
+        }
+        .city-back-btn:hover {
+          background: rgba(255,255,255,0.11);
+          color: rgba(230,230,250,0.9);
+          border-color: rgba(230,230,250,0.28);
+        }
+        .city-input-field {
+          width: 100%;
+          box-sizing: border-box;
+          background: rgba(10,8,40,0.55);
+          border: 1px solid rgba(230,230,250,0.09);
+          border-radius: 10px;
+          padding: 14px 16px;
+          color: rgba(230,230,250,0.85);
+          font-size: 13px;
+          font-family: 'Playfair Display', Georgia, serif;
+          font-style: italic;
+          letter-spacing: 0.03em;
+          outline: none;
+          transition: border-color 0.2s, background 0.2s;
+        }
+        .city-input-field:focus {
+          border-color: rgba(196,174,244,0.35);
+          background: rgba(20,12,60,0.6);
+        }
+        .city-input-field::placeholder { color: rgba(230,230,250,0.2); }
       `}</style>
 
       <Canvas
@@ -1111,7 +1133,7 @@ export default function CityOfStars() {
           stories={filteredStories}
           selectedId={selectedId}
           onSelectStar={(s) => {
-            // 原有的 imageUrl 懒加载逻辑保持不动
+            // 懒加载 imageUrl
             if (s.imageUrl === '') {
               supabase
                 .from('stories')
@@ -1128,10 +1150,12 @@ export default function CityOfStars() {
                   }
                 })
             }
-            // 新增：打开 StoryReader，找到点击的星星在 stories 里的 index
+            // 触发相机飞行
+            setSelectedId(s.id)
+            // 飞行动画结束后再打开 StoryReader
             const index = stories.findIndex((story) => story.id === s.id)
             setReaderIndex(index >= 0 ? index : 0)
-            setReaderOpen(true)
+            setTimeout(() => setReaderOpen(true), 3500)
           }}
           onUploadClick={() => setIsUploadModalOpen(true)}
           resetTrigger={resetTrigger}
@@ -1139,44 +1163,47 @@ export default function CityOfStars() {
         />
       </Canvas>
 
-      {/* Full-screen story overlay */}
-      {selectedId !== null && (() => {
-        const story = stories.find((s) => s.id === selectedId);
-        return story ? <StoryOverlay story={story} onClose={handleReset} /> : null;
-      })()}
 
       {/* StoryReader */}
       {readerOpen && (
         <StoryReader
           stories={stories}
           initialIndex={readerIndex}
-          onClose={() => setReaderOpen(false)}
+          onClose={() => { handleReset(); setReaderOpen(false); }}
         />
       )}
 
-      {/* Filter UI */}
-      <div className="pointer-events-auto absolute top-8 left-0 right-0 z-20 flex justify-center gap-2">
-        {(['all', 'today', 'week', 'month'] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            style={{
-              color: filter === f ? '#FFEC8B' : 'rgba(230, 230, 250, 0.35)',
-              fontFamily: "'Playfair Display', Georgia, serif",
-              fontStyle: 'italic',
-              fontSize: '13px',
-              letterSpacing: '0.05em',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '4px 12px',
-              borderBottom: filter === f ? '1px solid #FFEC8B' : '1px solid transparent',
-              transition: 'color 0.3s, border-color 0.3s',
-            }}
-          >
-            {f === 'all' ? 'All' : f === 'today' ? 'Today' : f === 'week' ? 'This week' : 'This month'}
-          </button>
-        ))}
+
+      {/* Neighborhood filter */}
+      <div className="pointer-events-auto absolute top-7 left-0 right-0 z-20 flex justify-center">
+        <select
+          value={selectedNeighborhood ?? ''}
+          onChange={(e) => setSelectedNeighborhood(e.target.value || null)}
+          style={{
+            background: 'rgba(5,3,20,0.55)',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid rgba(230,230,250,0.1)',
+            borderRadius: '999px',
+            padding: '5px 20px',
+            color: selectedNeighborhood ? 'rgba(232,213,163,0.9)' : 'rgba(230,230,250,0.45)',
+            fontFamily: "'Playfair Display', Georgia, serif",
+            fontStyle: 'italic',
+            fontSize: '13px',
+            letterSpacing: '0.05em',
+            appearance: 'none',
+            cursor: 'pointer',
+            outline: 'none',
+          }}
+        >
+          <option value="">All neighborhoods</option>
+          {NYC_LOCATIONS.map(({ group, places }) => (
+            <optgroup key={group} label={group}>
+              {places.map((place) => (
+                <option key={place} value={place}>{place}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
       </div>
 
       {loadError && (
@@ -1193,16 +1220,32 @@ export default function CityOfStars() {
       )}
 
       {/* UI 层 */}
-      <div className="pointer-events-none absolute bottom-10 left-0 right-0 z-10 flex flex-col items-center text-white">
-        <h1 className="font-serif tracking-tight" style={{ fontSize: '2.6rem', color: '#f0db13' }}>City of Stars</h1>
+      <div className="pointer-events-none absolute bottom-10 left-0 right-0 z-10 flex flex-col items-center text-white" style={{ gap: '10px' }}>
+        <h1
+          className="font-serif"
+          style={{
+            fontSize: 'clamp(2rem, 4vw, 2.8rem)',
+            fontFamily: "'Playfair Display', Georgia, serif",
+            fontStyle: 'italic',
+            fontWeight: 400,
+            letterSpacing: '0.12em',
+            background: 'linear-gradient(135deg, #F0E6C8 0%, #E8D5A3 45%, #C4AEF4 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            animation: 'titleGlow 4s ease-in-out infinite',
+          }}
+        >
+          City of Stars
+        </h1>
         <div style={{
           fontFamily: "'Playfair Display', Georgia, serif",
-          fontSize: '15px',
+          fontSize: '13px',
           fontStyle: 'italic',
           fontWeight: 400,
-          color: 'rgba(255, 255, 255, 0.82)',
-          letterSpacing: '0.04em',
-          lineHeight: 1,
+          color: 'rgba(255, 255, 255, 0.45)',
+          letterSpacing: '0.1em',
+          lineHeight: 1.6,
         }}>
           somewhere in these streets, your story is waiting
         </div>
