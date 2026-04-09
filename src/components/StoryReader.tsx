@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { StoryData } from './CityOfStars'
+import { supabase } from '../lib/supabase'
 
 type StoryReaderProps = {
   stories: StoryData[]
   initialIndex: number
   onClose: () => void
+  onStoryChange?: (storyId: string) => void
+  onImageLoad?: (storyId: string, imageUrl: string) => void
 }
 
 function useTypewriter(text: string, isActive: boolean, speed = 38) {
@@ -25,11 +28,21 @@ function useTypewriter(text: string, isActive: boolean, speed = 38) {
   return displayed
 }
 
-export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps) {
+export function StoryReader({ stories, initialIndex, onClose, onStoryChange, onImageLoad }: StoryReaderProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
   const [index, setIndex] = useState(initialIndex)
   const [imgLoaded, setImgLoaded] = useState(false)
   const [typingActive, setTypingActive] = useState(false)
+  const [visible, setVisible] = useState(true)
+  const [echoes, setEchoes] = useState<Array<{
+    id: string
+    text: string
+    author_name?: string
+    created_at: string
+  }>>([])
+  const [echoText, setEchoText] = useState('')
+  const [echoName, setEchoName] = useState('')
+  const [echoSubmitting, setEchoSubmitting] = useState(false)
 
   const story = stories[index]
 
@@ -42,6 +55,55 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
     const t2 = setTimeout(() => setTypingActive(true), 600)
     return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
+
+  // 懒加载：当前 story 没有 imageUrl 时从 Supabase 拉取
+  useEffect(() => {
+    if (story.imageUrl) return
+    supabase
+      .from('stories')
+      .select('id,image_url')
+      .eq('id', story.id)
+      .single()
+      .then(({ data }) => {
+        if (data?.image_url) {
+          onImageLoad?.(story.id, data.image_url)
+        }
+      })
+  }, [story.id, story.imageUrl])
+
+  /* 切换故事时拉取 echoes（暂时隐藏）
+  useEffect(() => {
+    setEchoes([])
+    supabase
+      .from('echoes')
+      .select('id, text, author_name, created_at')
+      .eq('story_id', story.id)
+      .order('created_at', { ascending: true })
+      .then(({ data }) => {
+        if (data) setEchoes(data)
+      })
+  }, [story.id])
+
+  const handleEchoSubmit = async () => {
+    if (!echoText.trim() || echoSubmitting) return
+    setEchoSubmitting(true)
+    const { data, error } = await supabase
+      .from('echoes')
+      .insert({
+        story_id: story.id,
+        text: echoText.trim().slice(0, 50),
+        author_name: echoName.trim() || null,
+      })
+      .select()
+      .single()
+    if (!error && data) {
+      setEchoes(prev => [...prev, data])
+      setEchoText('')
+    }
+    setEchoSubmitting(false)
+  }
+  */
+  const handleEchoSubmit = async () => {}
 
   // Reset image + typewriter when story changes
   useEffect(() => {
@@ -154,16 +216,14 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
         justifyContent: 'space-between',
       }}>
         {/* 图片 */}
-        <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'center' }}>
+        <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'center', opacity: visible ? 1 : 0, transition: 'opacity 0.32s ease' }}>
           <img
-            key={story.id}
             src={story.imageUrl || ''}
             alt=""
             style={{
               width: '90%',
               maxHeight: '70vh',
               objectFit: 'contain',
-              border: '0.5px solid rgba(255,255,255,0.15)',
               cursor: 'zoom-in',
               filter: imgLoaded
                 ? 'contrast(1.05) saturate(0.9)'
@@ -178,6 +238,7 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
         <div style={{
           display: 'flex', flexDirection: 'column', gap: '10px',
           marginTop: 'auto', paddingTop: '2rem',
+          pointerEvents: 'auto',
         }}>
           {[
             (index - 1 + stories.length) % stories.length,
@@ -188,7 +249,15 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
             return (
               <div
                 key={s.id}
-                onClick={() => setIndex(i)}
+                onClick={() => {
+                  if (i === index) return
+                  setVisible(false)
+                  setTimeout(() => {
+                    setIndex(i)
+                    onStoryChange?.(stories[i].id)
+                    setVisible(true)
+                  }, 320)
+                }}
                 style={{
                   cursor: 'pointer',
                   fontFamily: "'Playfair Display', Georgia, serif",
@@ -218,6 +287,9 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
       <div style={{
         position: 'relative', zIndex: 1,
         display: 'flex', flexDirection: 'column',
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'translateY(0)' : 'translateY(10px)',
+        transition: 'opacity 0.32s ease, transform 0.32s ease',
       }}>
         {/* 元数据 — 一行，右对齐，顶部 */}
         <div style={{
@@ -238,21 +310,10 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
           ))}
         </div>
 
-        {/* 章节编号 */}
-        <div style={{
-          marginTop: '3rem',
-          fontSize: '12px',
-          color: 'rgba(255,255,255,0.3)',
-          fontFamily: 'monospace',
-          letterSpacing: '0.1em',
-        }}>
-          {['I','II','III','IV','V','VI','VII','VIII','IX','X'][index] || `${index + 1}`}.
-        </div>
-
         {/* 主标题 */}
         <h1 style={{
           fontFamily: "'Playfair Display', Georgia, serif",
-          fontSize: 'clamp(2.5rem, 5vw, 4rem)',
+          fontSize: 'clamp(1.8rem, 3.5vw, 2.8rem)',
           fontWeight: 400,
           fontStyle: 'italic',
           lineHeight: 0.95,
@@ -276,6 +337,133 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
           <span style={{ animation: 'blink 1s step-end infinite' }}>|</span>
         </p>
 
+        {/* Echo 区域 */}
+        <div style={{
+          marginTop: '3rem',
+          paddingTop: '2rem',
+          borderTop: '0.5px solid rgba(255,255,255,0.08)',
+          display: 'none',
+        }}>
+          <div style={{
+            fontFamily: 'monospace',
+            fontSize: '9px',
+            letterSpacing: '0.2em',
+            color: 'rgba(255,255,255,0.25)',
+            textTransform: 'uppercase',
+            marginBottom: '1.2rem',
+          }}>
+            {echoes.length > 0 ? `${echoes.length} echo${echoes.length > 1 ? 's' : ''}` : 'echoes'}
+          </div>
+
+          {echoes.length > 0 && (
+            <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {echoes.map(echo => (
+                <div key={echo.id} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <div style={{
+                    fontFamily: "'Playfair Display', Georgia, serif",
+                    fontStyle: 'italic',
+                    fontSize: '13px',
+                    color: 'rgba(255,255,255,0.65)',
+                    lineHeight: 1.6,
+                  }}>
+                    {echo.text}
+                  </div>
+                  <div style={{
+                    fontFamily: 'monospace',
+                    fontSize: '9px',
+                    letterSpacing: '0.12em',
+                    color: 'rgba(255,255,255,0.2)',
+                  }}>
+                    — {echo.author_name || 'a stranger'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                value={echoText}
+                onChange={e => setEchoText(e.target.value.slice(0, 50))}
+                onKeyDown={e => e.key === 'Enter' && handleEchoSubmit()}
+                placeholder="leave an echo..."
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '0.5px solid rgba(255,255,255,0.12)',
+                  padding: '8px 40px 8px 0',
+                  fontFamily: "'Playfair Display', Georgia, serif",
+                  fontStyle: 'italic',
+                  fontSize: '13px',
+                  color: '#FDF5E6',
+                  outline: 'none',
+                  letterSpacing: '0.02em',
+                }}
+              />
+              <span style={{
+                position: 'absolute',
+                right: 0,
+                bottom: '10px',
+                fontFamily: 'monospace',
+                fontSize: '9px',
+                color: echoText.length > 40
+                  ? 'rgba(242,180,74,0.6)'
+                  : 'rgba(255,255,255,0.18)',
+              }}>
+                {50 - echoText.length}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={echoName}
+                onChange={e => setEchoName(e.target.value)}
+                placeholder="your name (optional)"
+                maxLength={20}
+                style={{
+                  flex: 1,
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '0.5px solid rgba(255,255,255,0.08)',
+                  padding: '6px 0',
+                  fontFamily: "'Playfair Display', Georgia, serif",
+                  fontStyle: 'italic',
+                  fontSize: '11px',
+                  color: 'rgba(255,255,255,0.5)',
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={handleEchoSubmit}
+                disabled={!echoText.trim() || echoSubmitting}
+                style={{
+                  background: 'none',
+                  border: '0.5px solid rgba(245,197,24,0.3)',
+                  borderRadius: '2px',
+                  padding: '5px 14px',
+                  fontFamily: 'monospace',
+                  fontSize: '9px',
+                  letterSpacing: '0.15em',
+                  color: echoText.trim()
+                    ? 'rgba(245,197,24,0.7)'
+                    : 'rgba(255,255,255,0.2)',
+                  cursor: echoText.trim() ? 'pointer' : 'default',
+                  textTransform: 'uppercase',
+                  transition: 'all 0.2s',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {echoSubmitting ? '...' : 'echo ✦'}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* 底部装饰线 + 下一篇 */}
         <div style={{
           marginTop: 'auto',
@@ -296,8 +484,6 @@ export function StoryReader({ stories, initialIndex, onClose }: StoryReaderProps
         </div>
       </div>
 
-      {/* pointer-events 覆盖层 */}
-      <div style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'auto' }} />
     </div>
   )
 }

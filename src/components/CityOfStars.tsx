@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { Canvas, useFrame, useThree, useLoader } from "@react-three/fiber";
-import { Html, OrbitControls, PerspectiveCamera, Stars } from "@react-three/drei";
+import { Html, OrbitControls, PerspectiveCamera, Stars, Line } from "@react-three/drei";
 import { EffectComposer, Bloom, SMAA, ToneMapping } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
 import * as THREE from "three";
@@ -9,6 +9,9 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { X, UploadCloud, Image as ImageIcon, Type, MapPin } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { StoryReader } from './StoryReader';
+import { IntroPage } from './IntroPage';
+import { NYCClock } from './NYCClock';
+import { CursorHint } from './CursorHint';
 
 // 模块级鼠标坐标（归一化 -1~1），子组件可直接读取，无需 prop 传递
 export const mouse3D = { x: 0, y: 0 };
@@ -18,6 +21,7 @@ const NYC_LOCATIONS = [
     'Central Park', 'West Village', 'SoHo', 'Lower East Side',
     'Brooklyn Bridge', 'Times Square', 'Harlem', 'Upper West Side',
     'Midtown', 'East Village', 'Chinatown', 'Financial District',
+    'Roosevelt Island',
   ]},
   { group: 'Brooklyn', places: [
     'Williamsburg', 'DUMBO', 'Bushwick', 'Park Slope',
@@ -57,6 +61,8 @@ export type StoryData = {
   location?: string;
   author_name?: string;
   title?: string;
+  scaleHint?: number;
+  isNew?: boolean;
 };
 
 type StoredStory = {
@@ -79,9 +85,8 @@ function readLocalStories(): StoryData[] {
     if (!Array.isArray(parsed) || parsed.length === 0) return [];
 
     return parsed.map((s, i) => {
-      const v = galaxyPosition(i, Math.max(parsed.length, 50), {
-        arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
-      });
+      const v = timeBasedPosition(parsed[i], i, parsed.length, parsed);
+      const layer = i % 3;
       return {
         id: s.id,
         position: [v.x, v.y, v.z] as [number, number, number],
@@ -90,6 +95,7 @@ function readLocalStories(): StoryData[] {
         seed: Math.random(),
         date: s.date,
         taken_at: s.taken_at,
+        scaleHint: layer === 0 ? 1.6 : layer === 1 ? 1.0 : 0.65,
       };
     });
   } catch (err) {
@@ -129,7 +135,7 @@ function createSoftDotTexture(): THREE.CanvasTexture {
 // --- 1. 中央柔和粒子星体 (上传入口) ---
 const SPARSE_COUNT = 40;
 
-function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
+function CentralCoreStar({ onUploadClick, onHover }: { onUploadClick: () => void; onHover: (t: 'sphere' | null) => void }) {
   const groupRef  = useRef<THREE.Group>(null!);
   const pointsRef = useRef<THREE.Points>(null!);
   const sparseRef = useRef<THREE.Points>(null!);
@@ -259,8 +265,8 @@ function CentralCoreStar({ onUploadClick }: { onUploadClick: () => void }) {
     <group
       ref={groupRef}
       onClick={(e) => { e.stopPropagation(); onUploadClick(); }}
-      onPointerOver={() => { setHovered(true); document.body.style.cursor = "pointer"; }}
-      onPointerOut={() => { setHovered(false); document.body.style.cursor = "default"; }}
+      onPointerOver={() => { setHovered(true); document.body.style.cursor = "pointer"; onHover('sphere'); }}
+      onPointerOut={() => { setHovered(false); document.body.style.cursor = "default"; onHover(null); }}
     >
       <points ref={pointsRef}>
         <bufferGeometry>
@@ -327,15 +333,20 @@ function ParticleStoryStar({
   isSelected,
   dimmed,
   onClick,
+  onHover,
 }: {
   data: StoryData;
   isSelected: boolean;
   dimmed: boolean;
   onClick: (data: StoryData) => void;
+  onHover: (t: 'star' | null) => void;
 }) {
   const meshRef = useRef<THREE.Sprite>(null);
-  const baseScale = 1;
+  const birthRef = useRef<number | null>(null);
+  const baseScale = data.scaleHint ?? 1.0;
   const magOffset = useRef({ x: 0, y: 0 });
+  const breathSpeed = 0.7 + (data.seed % 0.5);
+  const breathPhase = data.seed * Math.PI * 2;
   const texturePath = getStarTexture(data.id.toString(), data.taken_at);
   const flareTexture = useLoader(THREE.TextureLoader, texturePath);
 
@@ -383,6 +394,31 @@ function ParticleStoryStar({
     // 将 bob + 磁力偏移合并写入 mesh local position
     mesh.position.x = magOffset.current.x;
     mesh.position.y = bobY + magOffset.current.y;
+
+    // 出生动画：前 1.2s 内
+    if (data.isNew && birthRef.current === null) {
+      birthRef.current = t;
+    }
+
+    if (data.isNew && birthRef.current !== null) {
+      const age = t - birthRef.current;
+      if (age < 1.2) {
+        const progress = age / 1.2;
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const flicker = 1 + 0.4 * Math.sin(age * 25) * (1 - progress);
+        const birthScale = (data.scaleHint ?? 1.0) * 1.8;
+        mesh.scale.setScalar(eased * birthScale * flicker);
+        const mat = mesh.material as THREE.SpriteMaterial;
+        mat.opacity = eased;
+        return;
+      } else {
+        data.isNew = false;
+      }
+    }
+
+    // 深度感知 scale（基于 scaleHint）+ 呼吸动画
+    const s = baseScale * (isSelected ? 2.2 : dimmed ? 0.7 : 1.0);
+    mesh.scale.setScalar(s * (1 + 0.06 * Math.sin(t * breathSpeed + breathPhase)));
   });
 
   useEffect(() => {
@@ -393,16 +429,14 @@ function ParticleStoryStar({
     gsap.fromTo(mat, { opacity: 0.35 }, { opacity: 1, duration: 0.22, repeat: 2, yoyo: true, ease: "sine.inOut" });
   }, [data.id]);
 
-  const scale = isSelected ? baseScale * 1.65 : baseScale;
-
   return (
     <group position={data.position}>
       <sprite
         ref={meshRef}
-        scale={[scale * 1.2, scale * 1.2, 1]}
+        scale={[baseScale, baseScale, 1]}
         onClick={(e) => { e.stopPropagation(); onClick(data); }}
-        onPointerOver={() => { document.body.style.cursor = "pointer"; }}
-        onPointerOut={() => { document.body.style.cursor = "auto"; }}
+        onPointerOver={() => { document.body.style.cursor = "pointer"; onHover('star'); }}
+        onPointerOut={() => { document.body.style.cursor = "auto"; onHover(null); }}
       >
         <spriteMaterial
           map={flareTexture}
@@ -422,14 +456,22 @@ function CameraRig({
   selectedId,
   stories,
   resetTrigger,
+  onCameraReady,
 }: {
   selectedId: string | null;
   stories: StoryData[];
   resetTrigger: number;
+  onCameraReady?: (cam: THREE.PerspectiveCamera) => void;
 }) {
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const prevId = useRef<string | null>(null);
   const { camera } = useThree();
+
+  useEffect(() => {
+    if (camera instanceof THREE.PerspectiveCamera) {
+      onCameraReady?.(camera);
+    }
+  }, [camera]);
 
   // Fly to selected story
   useEffect(() => {
@@ -567,6 +609,48 @@ function StarDust() {
   return null;
 }
 
+// --- 星座连线 ---
+function ConstellationLines({ stories }: { stories: StoryData[] }) {
+  if (stories.length < 2) return null;
+
+  const lines: [THREE.Vector3, THREE.Vector3][] = [];
+
+  stories.forEach((story, i) => {
+    const pos = new THREE.Vector3(...story.position);
+    let nearest: { dist: number; idx: number } | null = null;
+
+    stories.forEach((other, j) => {
+      if (i === j) return;
+      const otherPos = new THREE.Vector3(...other.position);
+      const dist = pos.distanceTo(otherPos);
+      if (!nearest || dist < nearest.dist) {
+        nearest = { dist, idx: j };
+      }
+    });
+
+    if (nearest && (nearest as { dist: number; idx: number }).dist < 12) {
+      const otherPos = new THREE.Vector3(...stories[(nearest as { dist: number; idx: number }).idx].position);
+      lines.push([pos, otherPos]);
+    }
+  });
+
+  return (
+    <>
+      {lines.map((pts, i) => (
+        <Line
+          key={i}
+          points={pts}
+          color="#C4AEF4"
+          lineWidth={0.3}
+          transparent
+          opacity={0.08}
+          depthWrite={false}
+        />
+      ))}
+    </>
+  );
+}
+
 // --- 5. 场景 ---
 function StarFieldScene({
   stories,
@@ -575,6 +659,8 @@ function StarFieldScene({
   onUploadClick,
   resetTrigger,
   bloomBoost,
+  onCameraReady,
+  onHover,
 }: {
   stories: StoryData[];
   selectedId: string | null;
@@ -582,6 +668,8 @@ function StarFieldScene({
   onUploadClick: () => void;
   resetTrigger: number;
   bloomBoost: boolean;
+  onCameraReady?: (cam: THREE.PerspectiveCamera) => void;
+  onHover: (t: 'sphere' | 'star' | null) => void;
 }) {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -605,7 +693,7 @@ function StarFieldScene({
       <StarDust />
 
       {/* 中央粒子星体 */}
-      <CentralCoreStar onUploadClick={onUploadClick} />
+      <CentralCoreStar onUploadClick={onUploadClick} onHover={onHover} />
 
       {/* 故事星星 */}
       <group>
@@ -616,11 +704,13 @@ function StarFieldScene({
             isSelected={selectedId === story.id}
             dimmed={selectedId !== null && selectedId !== story.id}
             onClick={onSelectStar}
+            onHover={onHover}
           />
         ))}
+        <ConstellationLines stories={stories} />
       </group>
 
-      <CameraRig selectedId={selectedId} stories={stories} resetTrigger={resetTrigger} />
+      <CameraRig selectedId={selectedId} stories={stories} resetTrigger={resetTrigger} onCameraReady={onCameraReady} />
 
       <EffectComposer enableNormalPass={false} multisampling={0}>
         <SMAA />
@@ -641,10 +731,14 @@ function StarFieldScene({
 function UploadModal({
   onClose,
   onUpload,
+  onGetStarScreenPos,
 }: {
   onClose: () => void;
-  onUpload: (story: { text: string; imageUrl: string | null; takenAt: string }) => void;
+  onUpload: (story: { text: string; imageUrl: string | null; takenAt: string; title: string }) => void;
+  onGetStarScreenPos: () => { x: number; y: number };
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const [collapsing, setCollapsing] = useState(false);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [location, setLocation] = useState("");
@@ -703,23 +797,127 @@ function UploadModal({
       alert("Cloud upload failed, but saved on this browser.");
     }
     setTitle('');
-    onUpload({ text, imageUrl: preview, takenAt: takenAt.toISOString() });
-    onClose();
+
+    const rect = modalRef.current?.getBoundingClientRect();
+    const centerX = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const centerY = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+
+    setCollapsing(true);
+
+    gsap.to(modalRef.current, {
+      scaleX: 0.04,
+      scaleY: 0.04,
+      opacity: 0,
+      duration: 0.55,
+      ease: 'power3.in',
+      transformOrigin: 'center center',
+      onComplete: () => {
+        // 全屏滤镜层（落点时闪现）
+        const flash = document.createElement('div');
+        flash.style.cssText = `
+          position: fixed; inset: 0;
+          background: radial-gradient(ellipse at center, rgba(245,197,24,0.18) 0%, rgba(74,18,128,0.12) 50%, transparent 80%);
+          z-index: 9998;
+          pointer-events: none;
+          opacity: 0;
+        `;
+        document.body.appendChild(flash);
+
+        const orb = document.createElement('div');
+        orb.style.cssText = `
+          position: fixed;
+          left: ${centerX - 10}px;
+          top: ${centerY - 10}px;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          background: radial-gradient(circle, #ffffff 0%, #fff8c0 25%, rgba(245,197,24,0.5) 60%, rgba(245,197,24,0) 100%);
+          box-shadow: 0 0 16px 6px rgba(255,255,255,0.95), 0 0 40px 14px rgba(245,197,24,0.55), 0 0 70px 24px rgba(160,100,255,0.2);
+          z-index: 9999;
+          pointer-events: none;
+        `;
+        document.body.appendChild(orb);
+
+        const starPos = onGetStarScreenPos();
+        const targetX = starPos.x - 6;
+        const targetY = starPos.y - 6;
+
+        // 先飞到屏幕中心（模拟穿越银河）
+        gsap.to(orb, {
+          left: window.innerWidth / 2 - 6,
+          top: window.innerHeight / 2 - 6,
+          width: 4,
+          height: 4,
+          duration: 0.55,
+          ease: 'power2.in',
+          onComplete: () => {
+            // 再从中心减速飞向星星落点
+            gsap.to(orb, {
+              left: targetX,
+              top: targetY,
+              width: 10,
+              height: 10,
+              duration: 1.1,
+              ease: 'power2.out',
+              onComplete: () => {
+                // 落点滤镜闪现
+                gsap.to(flash, { opacity: 1, duration: 0.18, ease: 'power2.out',
+                  onComplete: () => {
+                    gsap.to(flash, { opacity: 0, duration: 0.7, ease: 'power2.in',
+                      onComplete: () => { document.body.removeChild(flash); }
+                    });
+                  }
+                });
+                // 光点渐隐
+                gsap.to(orb, {
+                  opacity: 0,
+                  width: 28,
+                  height: 28,
+                  left: targetX - 9,
+                  top: targetY - 9,
+                  duration: 0.5,
+                  ease: 'power2.out',
+                  onComplete: () => {
+                    document.body.removeChild(orb);
+                    onUpload({ text, imageUrl: preview, takenAt: takenAt.toISOString(), title: title.trim() });
+                    onClose();
+                  }
+                });
+              }
+            });
+          }
+        });
+      }
+    });
   };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       style={{ animation: "cityStarsCardIn 0.3s ease-out both" }}
     >
       <div
-        className="relative w-[min(480px,92vw)] rounded-3xl p-8 shadow-2xl"
-        style={{ background: '#0a0820', border: '1px solid rgba(230, 230, 250, 0.15)' }}
+        ref={modalRef}
+        className="relative w-[min(480px,92vw)] p-8"
+        style={{
+          background: 'rgba(8,4,24,0.88)',
+          border: '0.5px solid rgba(255,255,255,0.1)',
+          borderRadius: '8px',
+          backdropFilter: 'blur(16px)',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
       >
+        {/* 极光内衬 */}
+        <div style={{
+          position: 'absolute', inset: 0, borderRadius: '8px', pointerEvents: 'none',
+          background: 'linear-gradient(135deg, rgba(160,120,255,0.04) 0%, transparent 60%)',
+        }} />
+
         <button
           onClick={onClose}
           className="absolute right-5 top-5 transition-colors"
-          style={{ color: 'rgba(230, 230, 250, 0.3)' }}
+          style={{ color: 'rgba(230, 230, 250, 0.3)', zIndex: 1 }}
           onMouseEnter={e => (e.currentTarget.style.color = 'rgba(230,230,250,0.75)')}
           onMouseLeave={e => (e.currentTarget.style.color = 'rgba(230,230,250,0.3)')}
         >
@@ -731,14 +929,14 @@ function UploadModal({
             fontFamily: "'Playfair Display', Georgia, serif",
             fontStyle: 'italic',
             fontSize: '1.5rem',
-            color: '#E6E6FA',
+            color: '#E0E0FF',
             fontWeight: 400,
           }}>Light up a memory</h2>
           <div style={{
             fontFamily: "'Playfair Display', Georgia, serif",
             fontSize: '13px',
             fontStyle: 'italic',
-            color: 'rgba(196, 174, 244, 0.7)',
+            color: '#A0A0B0',
             letterSpacing: '0.06em',
             textAlign: 'center',
             marginTop: '10px',
@@ -750,10 +948,6 @@ function UploadModal({
 
         {/* 图片上传 */}
         <div className="mb-5">
-          <label className="mb-2 flex items-center gap-2 text-sm font-medium">
-            <ImageIcon size={15} style={{ color: 'rgba(230, 230, 250, 0.4)' }} />
-            <span style={{ color: 'rgba(230, 230, 250, 0.4)' }}>Your NYC moment</span>
-          </label>
           <div
             className="group relative flex h-44 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed transition-all"
             style={{ background: 'rgba(10,8,40,0.55)', borderColor: 'rgba(196,174,244,0.15)' }}
@@ -775,18 +969,8 @@ function UploadModal({
           </div>
         </div>
 
-        {/* Title 输入 */}
+        {/* Title */}
         <div style={{ marginBottom: '16px' }}>
-          <div style={{
-            fontSize: '10px',
-            letterSpacing: '0.16em',
-            color: 'rgba(230, 230, 250, 0.4)',
-            textTransform: 'uppercase',
-            marginBottom: '8px',
-            fontFamily: "'Playfair Display', Georgia, serif",
-          }}>
-            Title
-          </div>
           <input
             type="text"
             value={title}
@@ -794,43 +978,31 @@ function UploadModal({
             placeholder="name this moment..."
             maxLength={60}
             className="city-input-field"
-            style={{
-              fontFamily: "'Playfair Display', Georgia, serif",
-              fontStyle: 'italic',
-            }}
           />
         </div>
 
-        {/* 文字输入 */}
-        <div className="mb-4">
-          <label className="mb-2 flex items-center gap-2 text-sm font-medium">
-            <Type size={15} style={{ color: 'rgba(230, 230, 250, 0.4)' }} />
-            <span style={{ color: 'rgba(230, 230, 250, 0.4)' }}>Your story</span>
-          </label>
+        {/* Story */}
+        <div style={{ marginBottom: '16px' }}>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="a sentence, or just a few words..."
-            rows={3}
+            rows={5}
             className="city-input-field resize-none"
-            style={{ borderRadius: '12px' }}
           />
         </div>
 
-        {/* 地点输入 */}
-        <div className="mb-8">
-          <label className="mb-2 flex items-center gap-2 text-sm font-medium">
-            <MapPin size={15} style={{ color: 'rgba(230, 230, 250, 0.4)' }} />
-            <span style={{ color: 'rgba(230, 230, 250, 0.4)' }}>Where in NYC</span>
-          </label>
+        {/* Where in NYC + Your name — 并排 */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
           <select
             value={location}
             onChange={(e) => setLocation(e.target.value)}
             className="city-input-field"
             style={{
-              color: location ? 'rgba(230, 230, 250, 0.85)' : 'rgba(230, 230, 250, 0.25)',
+              color: location ? '#FDF5E6' : '#A0A0B0',
               appearance: 'none',
               cursor: 'pointer',
+              paddingLeft: 0,
             }}
           >
             <option value="" disabled style={{ color: '#333' }}>
@@ -845,24 +1017,12 @@ function UploadModal({
             ))}
             <option value="Somewhere in NYC">Somewhere in NYC</option>
           </select>
-        </div>
 
-        <div style={{ marginBottom: '16px' }}>
-          <div style={{
-            fontSize: '10px',
-            letterSpacing: '0.16em',
-            color: 'rgba(230, 230, 250, 0.4)',
-            textTransform: 'uppercase',
-            marginBottom: '8px',
-            fontFamily: "'Playfair Display', Georgia, serif",
-          }}>
-            Your name
-          </div>
           <input
             type="text"
             value={authorName}
             onChange={(e) => setAuthorName(e.target.value)}
-            placeholder="optional"
+            placeholder="your name..."
             maxLength={30}
             className="city-input-field"
           />
@@ -871,29 +1031,86 @@ function UploadModal({
         <button
           onClick={handleSubmit}
           disabled={submitting}
-          className="w-full rounded-xl py-3 transition-all active:scale-[0.98]"
           style={{
+            width: '100%',
+            padding: '14px',
             background: submitting
-              ? 'rgba(232,213,163,0.35)'
-              : 'linear-gradient(135deg, #F0E6C8 0%, #E8D5A3 55%, #d4b97a 100%)',
-            color: '#1C1430',
+              ? 'rgba(242,180,74,0.3)'
+              : 'linear-gradient(90deg, #F2C94C 0%, #F2994A 100%)',
+            border: 'none',
+            borderRadius: '4px',
+            color: '#0a0008',
             fontFamily: "'Playfair Display', Georgia, serif",
             fontStyle: 'italic',
-            fontWeight: 500,
-            fontSize: '1rem',
-            cursor: submitting ? 'wait' : 'pointer',
-            letterSpacing: '0.04em',
-            boxShadow: submitting ? 'none' : '0 2px 20px rgba(232,213,163,0.2)',
+            fontSize: '14px',
+            letterSpacing: '0.06em',
+            cursor: submitting ? 'not-allowed' : 'pointer',
+            boxShadow: submitting
+              ? 'none'
+              : '0 0 24px rgba(242,180,74,0.25), 0 0 48px rgba(242,153,74,0.1)',
+            transition: 'box-shadow 0.3s',
           }}
         >
           {submitting ? 'Uploading...' : 'Light Up This Star ✦'}
         </button>
+
+        <div style={{
+          textAlign: 'center',
+          marginTop: '14px',
+          fontFamily: 'monospace',
+          fontSize: '9px',
+          letterSpacing: '0.18em',
+          color: 'rgba(160,160,176,0.3)',
+          textTransform: 'uppercase',
+        }}>
+          your photo becomes a star in the sky
+        </div>
       </div>
     </div>
   );
 }
 
-// --- 螺旋星系位置生成器 ---
+// --- 时间轨道位置生成器 ---
+function timeBasedPosition(
+  story: { taken_at?: string },
+  index: number,
+  total: number,
+  allStories: { taken_at?: string }[]
+): THREE.Vector3 {
+
+  // 黄金角螺旋：最均匀的自然分布
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))  // 137.5°
+  const angle = index * goldenAngle
+
+  // 半径：时间越新越靠外，但范围收紧
+  const t = index / Math.max(total - 1, 1)
+  const minR = 3
+  const maxR = 14
+  const r = minR + t * (maxR - minR)
+
+  const x = r * Math.cos(angle)
+  const z = r * Math.sin(angle)
+
+  // Y 轴：按拍摄小时产生轻微高低
+  // 凌晨偏低，傍晚偏高，像城市的呼吸节律
+  const hour = story.taken_at
+    ? new Date(story.taken_at).getHours()
+    : 12
+  const hourNorm = (hour - 12) / 12
+  const y = hourNorm * 2.0 + (Math.random() - 0.5) * 0.8
+
+  // 景深三层：旋转时有层次感
+  const layer = index % 3
+  const depthShift =
+    layer === 0 ? 2.5 + Math.random() * 1.5
+    : layer === 1 ? (Math.random() - 0.5) * 2
+    : -(2.5 + Math.random() * 2)
+
+  return new THREE.Vector3(x, y, z + depthShift)
+}
+
+// --- 深度分层螺旋星系位置生成器 ---
+// layer = index % 3: 0 = near, 1 = mid, 2 = far
 function galaxyPosition(
   index: number,
   total: number,
@@ -928,12 +1145,21 @@ function galaxyPosition(
   const spreadA = Math.random() * Math.PI * 2;
 
   const x = (r + spreadR * Math.cos(spreadA)) * Math.cos(angle);
-  const z = (r + spreadR * Math.sin(spreadA)) * Math.sin(angle);
+  const baseZ = (r + spreadR * Math.sin(spreadA)) * Math.sin(angle);
   const y =
     r * yFlatten * (Math.random() - 0.5) +
     (Math.random() - 0.5) * yNoise;
 
-  return new THREE.Vector3(x, y, z);
+  // Depth layer offset: near (+8~+14), mid (-2~+2), far (-10~-18)
+  const layer = index % 3;
+  const depthOffset =
+    layer === 0
+      ? 8 + Math.random() * 6          // near: +8 to +14
+      : layer === 1
+      ? (Math.random() - 0.5) * 4      // mid:  -2 to +2
+      : -(10 + Math.random() * 8);     // far:  -10 to -18
+
+  return new THREE.Vector3(x, y, baseZ + depthOffset);
 }
 
 // --- 默认故事数据 ---
@@ -946,11 +1172,14 @@ const DEFAULT_STORIES: StoryData[] = STORY_SEEDS.map((s, i) => {
   const v = galaxyPosition(i, STORY_SEEDS.length, {
     arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.28, yFlatten: 0.35,
   });
-  return { ...s, position: [v.x, v.y, v.z] as [number, number, number] };
+  const layer = i % 3;
+  return { ...s, position: [v.x, v.y, v.z] as [number, number, number], scaleHint: layer === 0 ? 1.6 : layer === 1 ? 1.0 : 0.65 };
 });
 
 // --- 主组件 ---
 export default function CityOfStars() {
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const [showIntro, setShowIntro] = useState(() => !sessionStorage.getItem('hasVisited'));
   const [stories, setStories] = useState<StoryData[]>(DEFAULT_STORIES);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resetTrigger, setResetTrigger] = useState(0);
@@ -959,6 +1188,7 @@ export default function CityOfStars() {
   const [distanceFactor, setDistanceFactor] = useState(10);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [hoveredType, setHoveredType] = useState<'sphere' | 'star' | null>(null);
   const [selectedNeighborhood, setSelectedNeighborhood] = useState<string | null>(null);
 
   const handleReset = () => {
@@ -972,7 +1202,7 @@ export default function CityOfStars() {
       // Don't fetch image_url here — base64 images make rows huge and timeout
       const { data, error } = await supabase
         .from("stories")
-        .select("id,text,taken_at,location,author_name")
+        .select("id,text,taken_at,location,author_name,title")
         .order("taken_at", { ascending: false })
         .limit(120);
 
@@ -991,9 +1221,8 @@ export default function CityOfStars() {
 
       const loadedAsc = [...data].reverse();
       const loaded: StoryData[] = loadedAsc.map((row, i) => {
-        const v = galaxyPosition(i, Math.max(data.length, 50), {
-          arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
-        });
+        const v = timeBasedPosition(row, i, data.length, data);
+        const layer = i % 3;
         return {
           id: row.id,
           position: [v.x, v.y, v.z] as [number, number, number],
@@ -1008,6 +1237,8 @@ export default function CityOfStars() {
           taken_at: row.taken_at ?? undefined,
           location: row.location ?? undefined,
           author_name: row.author_name ?? undefined,
+          title: row.title ?? undefined,
+          scaleHint: layer === 0 ? 1.6 : layer === 1 ? 1.0 : 0.65,
         };
       });
       setStories(loaded);
@@ -1030,28 +1261,47 @@ export default function CityOfStars() {
     return () => window.removeEventListener("resize", q);
   }, []);
 
-  const handleAddStory = (newStory: { text: string; imageUrl: string | null; takenAt: string }) => {
+  const handleAddStory = (newStory: {
+    text: string
+    imageUrl: string | null
+    takenAt: string
+    title: string
+  }) => {
     const v = galaxyPosition(stories.length, 50, {
       arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
-    });
-    const pos: [number, number, number] = [v.x, v.y, v.z];
-    setStories((prev) => {
-      const next = [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          position: pos,
-          text: newStory.text,
-          imageUrl: newStory.imageUrl ?? "https://picsum.photos/400/300?random=99",
-          seed: Math.random(),
-          date: new Date()
-            .toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })
-            .replace(/\//g, "."),
-          taken_at: newStory.takenAt,
-        },
-      ];
-      return next;
-    });
+    })
+    const pos: [number, number, number] = [v.x, v.y, v.z]
+    const layer = stories.length % 3
+    const newId = Date.now().toString()
+
+    const newStoryObj = {
+      id: newId,
+      position: pos,
+      text: newStory.text,
+      imageUrl: newStory.imageUrl ?? '',
+      seed: Math.random(),
+      date: new Date().toLocaleDateString('en-US', {
+        year: 'numeric', month: 'short', day: 'numeric'
+      }),
+      taken_at: newStory.takenAt,
+      title: newStory.title || undefined,
+      scaleHint: layer === 0 ? 1.6 : layer === 1 ? 1.0 : 0.65,
+    }
+
+    // 阶段1：先加入场景，触发星星出生闪烁
+    setStories(prev => [...prev, newStoryObj])
+
+    // 阶段2：1.2s 后相机飞向新星星
+    setTimeout(() => {
+      setSelectedId(newId)
+    }, 1200)
+
+    // 阶段3：相机飞行 3.5s 后打开 StoryReader
+    setTimeout(() => {
+      const index = stories.length  // 新星星在末尾
+      setReaderIndex(index)
+      setReaderOpen(true)
+    }, 1200 + 3500)
   };
 
   return (
@@ -1059,9 +1309,46 @@ export default function CityOfStars() {
       className="relative h-screen w-full overflow-hidden"
       style={{
         background:
-          "linear-gradient(to bottom, #0d0a1a 0%, #1a0a3a 50%, #2d0f6e 100%)",
+          "linear-gradient(to bottom, #080514 0%, #120630 40%, #1e0848 70%, #4a1280 100%)",
       }}
     >
+      {showIntro && (
+        <IntroPage onEnter={() => {
+          sessionStorage.setItem('hasVisited', 'true');
+          setShowIntro(false);
+        }} />
+      )}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 2,
+        pointerEvents: 'none',
+        background: 'radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(4,2,10,0.75) 100%)',
+      }} />
+
+      <div style={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: '30%',
+        zIndex: 2,
+        pointerEvents: 'none',
+        background: 'linear-gradient(to top, rgba(74,18,128,0.45) 0%, rgba(30,8,72,0.2) 60%, transparent 100%)',
+      }} />
+
+      <div style={{
+        position: 'absolute',
+        top: '-5%',
+        left: '-10%',
+        width: '55%',
+        height: '55%',
+        zIndex: 1,
+        pointerEvents: 'none',
+        background: 'radial-gradient(ellipse at 40% 40%, rgba(100,60,200,0.06) 0%, rgba(60,20,140,0.03) 50%, transparent 70%)',
+        transform: 'rotate(-15deg)',
+      }} />
+
       <style>{`
         @keyframes cityStarsCardIn {
           from { opacity: 0; transform: translateY(8px) scale(0.98); }
@@ -1103,23 +1390,26 @@ export default function CityOfStars() {
         .city-input-field {
           width: 100%;
           box-sizing: border-box;
-          background: rgba(10,8,40,0.55);
-          border: 1px solid rgba(230,230,250,0.09);
-          border-radius: 10px;
-          padding: 14px 16px;
-          color: rgba(230,230,250,0.85);
-          font-size: 13px;
+          background: transparent;
+          border: none;
+          border-bottom: 0.5px solid rgba(255,255,255,0.1);
+          border-radius: 0;
+          padding: 11px 0;
           font-family: 'Playfair Display', Georgia, serif;
           font-style: italic;
-          letter-spacing: 0.03em;
+          font-size: 14px;
+          color: #FDF5E6;
           outline: none;
-          transition: border-color 0.2s, background 0.2s;
+          letter-spacing: 0.02em;
+          transition: border-color 0.2s;
         }
         .city-input-field:focus {
-          border-color: rgba(196,174,244,0.35);
-          background: rgba(20,12,60,0.6);
+          border-bottom-color: rgba(255,255,255,0.28);
         }
-        .city-input-field::placeholder { color: rgba(230,230,250,0.2); }
+        .city-input-field::placeholder {
+          color: #A0A0B0;
+          font-style: italic;
+        }
       `}</style>
 
       <Canvas
@@ -1132,6 +1422,7 @@ export default function CityOfStars() {
         <StarFieldScene
           stories={filteredStories}
           selectedId={selectedId}
+          onHover={setHoveredType}
           onSelectStar={(s) => {
             // 懒加载 imageUrl
             if (s.imageUrl === '') {
@@ -1160,9 +1451,12 @@ export default function CityOfStars() {
           onUploadClick={() => setIsUploadModalOpen(true)}
           resetTrigger={resetTrigger}
           bloomBoost={selectedId !== null}
+          onCameraReady={(cam) => { cameraRef.current = cam }}
         />
       </Canvas>
 
+      <NYCClock />
+      <CursorHint hoveredType={hoveredType} />
 
       {/* StoryReader */}
       {readerOpen && (
@@ -1170,6 +1464,14 @@ export default function CityOfStars() {
           stories={stories}
           initialIndex={readerIndex}
           onClose={() => { handleReset(); setReaderOpen(false); }}
+          onStoryChange={(storyId) => {
+            setSelectedId(storyId)
+          }}
+          onImageLoad={(storyId, imageUrl) => {
+            setStories((prev) =>
+              prev.map((s) => s.id === storyId ? { ...s, imageUrl } : s)
+            )
+          }}
         />
       )}
 
@@ -1256,6 +1558,18 @@ export default function CityOfStars() {
         <UploadModal
           onClose={() => setIsUploadModalOpen(false)}
           onUpload={handleAddStory}
+          onGetStarScreenPos={() => {
+            const v = galaxyPosition(stories.length, 50, {
+              arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
+            });
+            const canvas = document.querySelector('canvas');
+            if (!canvas || !cameraRef.current) return { x: window.innerWidth / 2, y: window.innerHeight * 0.42 };
+            const rect = canvas.getBoundingClientRect();
+            const projected = v.clone().project(cameraRef.current);
+            const x = (projected.x * 0.5 + 0.5) * rect.width + rect.left;
+            const y = (-projected.y * 0.5 + 0.5) * rect.height + rect.top;
+            return { x, y };
+          }}
         />
       )}
     </div>
