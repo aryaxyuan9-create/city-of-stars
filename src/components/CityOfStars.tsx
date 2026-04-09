@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Canvas, useFrame, useThree, useLoader } from "@react-three/fiber";
 import { Html, OrbitControls, PerspectiveCamera, Stars, Line } from "@react-three/drei";
 import { EffectComposer, Bloom, SMAA, ToneMapping } from "@react-three/postprocessing";
@@ -85,7 +85,9 @@ function readLocalStories(): StoryData[] {
     if (!Array.isArray(parsed) || parsed.length === 0) return [];
 
     return parsed.map((s, i) => {
-      const v = timeBasedPosition(parsed[i], i, parsed.length, parsed);
+      const v = galaxyPosition(i, Math.max(parsed.length, 50), {
+        arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
+      });
       const layer = i % 3;
       return {
         id: s.id,
@@ -473,6 +475,11 @@ function CameraRig({
     }
   }, [camera]);
 
+  useEffect(() => {
+    camera.position.set(8, 4, 20)
+    camera.lookAt(0, 0, 0)
+  }, []);
+
   // Fly to selected story
   useEffect(() => {
     if (selectedId == null) {
@@ -509,10 +516,16 @@ function CameraRig({
       ref={controlsRef}
       makeDefault
       enableDamping
-      dampingFactor={0.055}
-      minDistance={2.5}
-      maxDistance={48}
-      maxPolarAngle={Math.PI * 0.92}
+      dampingFactor={0.04}
+      enablePan={true}
+      panSpeed={0.8}
+      rotateSpeed={0.5}
+      zoomSpeed={0.8}
+      minDistance={2}
+      maxDistance={80}
+      maxPolarAngle={Math.PI}
+      minPolarAngle={0}
+      target={[0, 0, 0]}
     />
   );
 }
@@ -707,7 +720,7 @@ function StarFieldScene({
             onHover={onHover}
           />
         ))}
-        <ConstellationLines stories={stories} />
+        {/* <ConstellationLines stories={stories} /> */}
       </group>
 
       <CameraRig selectedId={selectedId} stories={stories} resetTrigger={resetTrigger} onCameraReady={onCameraReady} />
@@ -734,9 +747,10 @@ function UploadModal({
   onGetStarScreenPos,
 }: {
   onClose: () => void;
-  onUpload: (story: { text: string; imageUrl: string | null; takenAt: string; title: string }) => void;
+  onUpload: (story: { text: string; imageUrl: string | null; takenAt: string; title: string; location: string }) => void;
   onGetStarScreenPos: () => { x: number; y: number };
 }) {
+  const isMobile = window.innerWidth < 768;
   const modalRef = useRef<HTMLDivElement>(null);
   const [collapsing, setCollapsing] = useState(false);
   const [title, setTitle] = useState("");
@@ -778,8 +792,8 @@ function UploadModal({
   };
 
   const handleSubmit = async () => {
-    if (!preview || !text.trim()) {
-      alert("Please add a photo and write your story.");
+    if (!preview || !text.trim() || !authorName.trim()) {
+      alert("Please add a photo, write your story, and enter your name.");
       return;
     }
     setSubmitting(true);
@@ -879,7 +893,7 @@ function UploadModal({
                   ease: 'power2.out',
                   onComplete: () => {
                     document.body.removeChild(orb);
-                    onUpload({ text, imageUrl: preview, takenAt: takenAt.toISOString(), title: title.trim() });
+                    onUpload({ text, imageUrl: preview, takenAt: takenAt.toISOString(), title: title.trim(), location });
                     onClose();
                   }
                 });
@@ -902,15 +916,17 @@ function UploadModal({
         style={{
           background: 'rgba(8,4,24,0.88)',
           border: '0.5px solid rgba(255,255,255,0.1)',
-          borderRadius: '8px',
+          borderRadius: '24px',
           backdropFilter: 'blur(16px)',
           position: 'relative',
           overflow: 'hidden',
+          maxHeight: isMobile ? '90vh' : 'none',
+          overflowY: isMobile ? 'auto' : 'visible',
         }}
       >
         {/* 极光内衬 */}
         <div style={{
-          position: 'absolute', inset: 0, borderRadius: '8px', pointerEvents: 'none',
+          position: 'absolute', inset: 0, borderRadius: '24px', pointerEvents: 'none',
           background: 'linear-gradient(135deg, rgba(160,120,255,0.04) 0%, transparent 60%)',
         }} />
 
@@ -993,7 +1009,7 @@ function UploadModal({
         </div>
 
         {/* Where in NYC + Your name — 并排 */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
           <select
             value={location}
             onChange={(e) => setLocation(e.target.value)}
@@ -1022,7 +1038,7 @@ function UploadModal({
             type="text"
             value={authorName}
             onChange={(e) => setAuthorName(e.target.value)}
-            placeholder="your name..."
+            placeholder="your name *"
             maxLength={30}
             className="city-input-field"
           />
@@ -1065,6 +1081,9 @@ function UploadModal({
         }}>
           your photo becomes a star in the sky
         </div>
+        {isMobile && (
+          <div style={{ paddingBottom: 'env(safe-area-inset-bottom, 16px)' }} />
+        )}
       </div>
     </div>
   );
@@ -1107,6 +1126,99 @@ function timeBasedPosition(
     : -(2.5 + Math.random() * 2)
 
   return new THREE.Vector3(x, y, z + depthShift)
+}
+
+// --- NYC 地理坐标 → 3D 场景位置 ---
+const NYC_COORDS: Record<string, { lng: number; lat: number }> = {
+  'Central Park':        { lng: -73.97, lat: 40.78 },
+  'West Village':        { lng: -74.00, lat: 40.73 },
+  'SoHo':                { lng: -74.00, lat: 40.72 },
+  'Lower East Side':     { lng: -73.99, lat: 40.71 },
+  'Brooklyn Bridge':     { lng: -73.99, lat: 40.70 },
+  'Times Square':        { lng: -73.98, lat: 40.75 },
+  'Harlem':              { lng: -73.94, lat: 40.81 },
+  'Upper West Side':     { lng: -73.98, lat: 40.78 },
+  'Midtown':             { lng: -73.98, lat: 40.75 },
+  'East Village':        { lng: -73.98, lat: 40.72 },
+  'Chinatown':           { lng: -73.99, lat: 40.71 },
+  'Financial District':  { lng: -74.01, lat: 40.70 },
+  'Roosevelt Island':    { lng: -73.95, lat: 40.76 },
+  'Williamsburg':        { lng: -73.95, lat: 40.71 },
+  'DUMBO':               { lng: -73.99, lat: 40.70 },
+  'Bushwick':            { lng: -73.92, lat: 40.69 },
+  'Park Slope':          { lng: -73.98, lat: 40.67 },
+  'Coney Island':        { lng: -73.99, lat: 40.57 },
+  'Crown Heights':       { lng: -73.94, lat: 40.67 },
+  'Red Hook':            { lng: -74.01, lat: 40.67 },
+  'Greenpoint':          { lng: -73.95, lat: 40.73 },
+  'Flushing':            { lng: -73.83, lat: 40.76 },
+  'Astoria':             { lng: -73.93, lat: 40.77 },
+  'Long Island City':    { lng: -73.94, lat: 40.74 },
+  'Jackson Heights':     { lng: -73.89, lat: 40.75 },
+  'The Bronx':           { lng: -73.89, lat: 40.84 },
+  'Staten Island Ferry': { lng: -74.01, lat: 40.64 },
+  'Somewhere in NYC':    { lng: -73.97, lat: 40.73 },
+}
+
+const NYC_BOUNDS = {
+  lngMin: -74.06, lngMax: -73.80,
+  latMin: 40.55,  latMax: 40.87,
+}
+
+function nycToPosition(
+  location: string | null | undefined,
+  index: number,
+  jitter = 3.5
+): THREE.Vector3 {
+  const coords = location ? NYC_COORDS[location] : null
+
+  let baseX: number
+  let baseZ: number
+
+  if (coords) {
+    // 以曼哈顿中心（-73.97, 40.74）为原点
+    const centerLng = -73.97
+    const centerLat = 40.74
+
+    // 放大映射范围，让星星充分散开
+    const lngScale = 160   // 经度差 * 160 = X 轴距离
+    const latScale = 200  // 纬度差 * 200 = Z 轴距离
+
+    baseX = (coords.lng - centerLng) * lngScale
+    baseZ = -(coords.lat - centerLat) * latScale
+    // 负号让北方（高纬度）在上方（负Z = 场景后方偏上）
+  } else {
+    baseX = (Math.random() - 0.5) * 18
+    baseZ = (Math.random() - 0.5) * 14
+  }
+
+  // 同区域内随机抖动形成星簇
+  const jitterX = (Math.random() - 0.5) * jitter
+  const jitterZ = (Math.random() - 0.5) * jitter
+
+  // Y轴高低
+  const y = (Math.random() - 0.5) * 3.5 + Math.sin(index * 1.3) * 0.8
+
+  // 景深分层
+  const layer = index % 3
+  const depthShift =
+    layer === 0 ?  2 + Math.random() * 2
+    : layer === 1 ? (Math.random() - 0.5) * 2
+    : -(2 + Math.random() * 3)
+
+  // 确保距离中心至少 6 单位
+  const pos = new THREE.Vector3(
+    baseX + jitterX,
+    y,
+    baseZ + jitterZ + depthShift
+  )
+  const distFromCenter = Math.sqrt(pos.x * pos.x + pos.z * pos.z)
+  if (distFromCenter < 3) {
+    const scale = 3 / distFromCenter
+    pos.x *= scale
+    pos.z *= scale
+  }
+  return pos
 }
 
 // --- 深度分层螺旋星系位置生成器 ---
@@ -1180,6 +1292,8 @@ const DEFAULT_STORIES: StoryData[] = STORY_SEEDS.map((s, i) => {
 export default function CityOfStars() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const [showIntro, setShowIntro] = useState(() => !sessionStorage.getItem('hasVisited'));
+  const [showAbout, setShowAbout] = useState(false);
+  const handleAboutEnter = useCallback(() => setShowAbout(false), []);
   const [stories, setStories] = useState<StoryData[]>(DEFAULT_STORIES);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resetTrigger, setResetTrigger] = useState(0);
@@ -1221,7 +1335,9 @@ export default function CityOfStars() {
 
       const loadedAsc = [...data].reverse();
       const loaded: StoryData[] = loadedAsc.map((row, i) => {
-        const v = timeBasedPosition(row, i, data.length, data);
+        const v = galaxyPosition(i, Math.max(data.length, 50), {
+          arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
+        });
         const layer = i % 3;
         return {
           id: row.id,
@@ -1266,10 +1382,9 @@ export default function CityOfStars() {
     imageUrl: string | null
     takenAt: string
     title: string
+    location: string
   }) => {
-    const v = galaxyPosition(stories.length, 50, {
-      arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
-    })
+    const v = nycToPosition(newStory.location || null, stories.length)
     const pos: [number, number, number] = [v.x, v.y, v.z]
     const layer = stories.length % 3
     const newId = Date.now().toString()
@@ -1458,6 +1573,45 @@ export default function CityOfStars() {
       <NYCClock />
       <CursorHint hoveredType={hoveredType} />
 
+      {/* About button — top-left */}
+      {!readerOpen && !isUploadModalOpen && !showAbout && (
+        <button
+          onClick={() => setShowAbout(true)}
+          style={{
+            position: 'fixed',
+            top: '28px',
+            left: '28px',
+            zIndex: 30,
+            background: 'transparent',
+            border: '0.5px solid rgba(255,255,255,0.15)',
+            borderRadius: '999px',
+            padding: '5px 16px',
+            fontFamily: 'monospace',
+            fontSize: '9px',
+            letterSpacing: '0.22em',
+            textTransform: 'uppercase',
+            color: 'rgba(255,255,255,0.35)',
+            cursor: 'pointer',
+            transition: 'color 0.2s, border-color 0.2s',
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.color = 'rgba(255,255,255,0.75)'
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.35)'
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.color = 'rgba(255,255,255,0.35)'
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'
+          }}
+        >
+          about
+        </button>
+      )}
+
+      {/* About overlay */}
+      {showAbout && (
+        <IntroPage instant onEnter={handleAboutEnter} onClose={handleAboutEnter} />
+      )}
+
       {/* StoryReader */}
       {readerOpen && (
         <StoryReader
@@ -1559,9 +1713,7 @@ export default function CityOfStars() {
           onClose={() => setIsUploadModalOpen(false)}
           onUpload={handleAddStory}
           onGetStarScreenPos={() => {
-            const v = galaxyPosition(stories.length, 50, {
-              arms: 2, turns: 2.5, radiusMax: 22, spreadFactor: 0.35,
-            });
+            const v = nycToPosition(null, stories.length);
             const canvas = document.querySelector('canvas');
             if (!canvas || !cameraRef.current) return { x: window.innerWidth / 2, y: window.innerHeight * 0.42 };
             const rect = canvas.getBoundingClientRect();

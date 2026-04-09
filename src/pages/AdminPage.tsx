@@ -28,6 +28,7 @@ type Story = {
   image_url?: string | null;
   location: string | null;
   taken_at: string | null;
+  author_name: string | null;
 };
 
 export default function AdminPage() {
@@ -48,12 +49,15 @@ export default function AdminPage() {
   const [editingLocation, setEditingLocation] = useState<string | null>(null);
   const [editLocationValue, setEditLocationValue] = useState("");
   const [savingLocation, setSavingLocation] = useState<string | null>(null);
+  const [editingAuthor, setEditingAuthor] = useState<string | null>(null);
+  const [editAuthorValue, setEditAuthorValue] = useState("");
+  const [savingAuthor, setSavingAuthor] = useState<string | null>(null);
 
   const fetchStories = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("stories")
-      .select("id,text,taken_at,location")
+      .select("id,text,taken_at,location,author_name")
       .order("taken_at", { ascending: false });
     if (error) {
       console.error("Failed to fetch admin stories:", error);
@@ -87,12 +91,19 @@ export default function AdminPage() {
   const handleSaveLocation = async (id: string) => {
     setSavingLocation(id);
     const newLocation = editLocationValue || null;
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("stories")
       .update({ location: newLocation })
-      .eq("id", id);
+      .eq("id", id)
+      .select();
     if (error) {
-      alert("Update failed: " + error.message);
+      console.error("Update error:", error);
+      alert("Update failed: " + error.message + "\n\nHint: check Supabase RLS — the anon key may not have UPDATE permission on the stories table.");
+      setSavingLocation(null);
+      return;
+    }
+    if (!data || data.length === 0) {
+      alert("Update failed: no rows were modified. Check Supabase RLS policies — UPDATE may not be allowed for the anon role.");
       setSavingLocation(null);
       return;
     }
@@ -101,6 +112,31 @@ export default function AdminPage() {
     );
     setSavingLocation(null);
     setEditingLocation(null);
+  };
+
+  const handleSaveAuthor = async (id: string) => {
+    setSavingAuthor(id);
+    const newAuthor = editAuthorValue.trim() || null;
+    const { data, error } = await supabase
+      .from("stories")
+      .update({ author_name: newAuthor })
+      .eq("id", id)
+      .select();
+    if (error) {
+      alert("Update failed: " + error.message);
+      setSavingAuthor(null);
+      return;
+    }
+    if (!data || data.length === 0) {
+      alert("Update failed: no rows modified. Check Supabase RLS UPDATE policy.");
+      setSavingAuthor(null);
+      return;
+    }
+    setStories((prev) =>
+      prev.map((s) => s.id === id ? { ...s, author_name: newAuthor } : s)
+    );
+    setSavingAuthor(null);
+    setEditingAuthor(null);
   };
 
   if (!authed) {
@@ -321,6 +357,91 @@ export default function AdminPage() {
                           })}
                         </span>
                       )}
+                    </div>
+                  )}
+
+                  {/* 作者姓名编辑区 */}
+                  {editingAuthor === story.id ? (
+                    <div style={{ marginBottom: "14px" }}>
+                      <input
+                        type="text"
+                        value={editAuthorValue}
+                        onChange={(e) => setEditAuthorValue(e.target.value)}
+                        maxLength={30}
+                        placeholder="author name..."
+                        style={{
+                          width: "100%",
+                          background: "rgba(0,0,128,0.25)",
+                          border: "1px solid rgba(230,230,250,0.2)",
+                          borderRadius: "8px",
+                          padding: "6px 10px",
+                          color: "#E6E6FA",
+                          fontSize: "12px",
+                          marginBottom: "8px",
+                          outline: "none",
+                          fontFamily: "inherit",
+                          fontStyle: "italic",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button
+                          onClick={() => handleSaveAuthor(story.id)}
+                          disabled={savingAuthor === story.id}
+                          style={{
+                            background: "rgba(255,236,139,0.15)",
+                            border: "1px solid rgba(255,236,139,0.35)",
+                            borderRadius: "7px",
+                            color: "#FFEC8B",
+                            padding: "5px 12px",
+                            fontSize: "11px",
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            fontStyle: "italic",
+                          }}
+                        >
+                          {savingAuthor === story.id ? "saving..." : "save"}
+                        </button>
+                        <button
+                          onClick={() => setEditingAuthor(null)}
+                          style={{
+                            background: "transparent",
+                            border: "1px solid rgba(230,230,250,0.15)",
+                            borderRadius: "7px",
+                            color: "rgba(230,230,250,0.4)",
+                            padding: "5px 12px",
+                            fontSize: "11px",
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            fontStyle: "italic",
+                          }}
+                        >
+                          cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => {
+                        setEditingAuthor(story.id);
+                        setEditAuthorValue(story.author_name ?? "");
+                      }}
+                      style={{
+                        fontSize: "11px",
+                        color: "rgba(230,230,250,0.35)",
+                        marginBottom: "14px",
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        borderBottom: "1px dashed rgba(230,230,250,0.15)",
+                        paddingBottom: "1px",
+                      }}
+                      title="click to edit author name"
+                    >
+                      {story.author_name
+                        ? `✍️ ${story.author_name}`
+                        : <span style={{ color: "rgba(230,230,250,0.2)", fontStyle: "italic" }}>+ add author</span>}
                     </div>
                   )}
 
